@@ -1,0 +1,29 @@
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+
+IndentWidth: 4
+ColumnLimit: 100
+PointerAlignment: Left
+AccessModifierOffset: -4
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<[A-Za-z0-9_]+>$'
+    Priority: 1
+  - Regex: '^<.+>$'
+    Priority: 2
+  - Regex: '^"comparch/.+"$'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 4
+
+SortIncludes: CaseInsensitive
+SortUsingDeclarations: true
