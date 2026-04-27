@@ -50,6 +50,7 @@ catch_discover_tests(test_gen_trace)
 add_executable(test_cache
     cache/test_cache_basic.cpp
     cache/test_replacement.cpp
+    cache/test_l1_l2.cpp
 )
 
 target_link_libraries(test_cache

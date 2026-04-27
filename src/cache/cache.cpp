@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "comparch/cache/main_memory.hpp"
+
 namespace comparch::cache {
 
 Cache::Cache(Config cfg, std::string name)
@@ -42,50 +44,88 @@ bool Cache::is_in_cache(std::uint64_t tag, std::uint64_t index) const {
     return false;
 }
 
-// Mirrors project1's insert_new_block_to_L1 (WBWA path).
-// WTWNA path arrives in Phase 2.3 alongside L2.
 void Cache::insert_new_block(char rw,
                              std::uint64_t tag,
                              std::uint64_t index,
                              std::uint64_t block_addr,
                              bool is_prefetch) {
-    if (cfg_.write_policy != WritePolicy::WBWA) {
-        // WTWNA path lands in a later commit (Phase 2.3 with L2).
-        throw std::logic_error("WTWNA insert path not implemented yet");
+    auto& set = rows[static_cast<std::size_t>(index)];
+
+    if (cfg_.write_policy == WritePolicy::WBWA) {
+        // ===== WBWA path — mirror of project1's insert_new_block_to_L1 =====
+        tag_meta_t new_block;
+        new_block.block_addr = block_addr;
+        new_block.tag        = tag;
+        new_block.valid      = true;
+        new_block.dirty      = false;
+        new_block.prefetched = is_prefetch;
+
+        if (set.LRU_list.size() == assoc) {
+            // Evict LRU; if dirty, count writeback and propagate to next level.
+            if (set.LRU_list.back().dirty) {
+                ++stats_.writebacks;
+                if (cfg_.next_level) {
+                    const std::uint64_t victim_byte_addr =
+                        set.LRU_list.back().block_addr << cfg_.b;
+                    cfg_.next_level->access(
+                        MemReq{victim_byte_addr, Op::Write, /*pc=*/0});
+                }
+            }
+            set.LRU_list.pop_back();
+        }
+
+        if (rw == 'W') {
+            new_block.dirty = true;
+        }
+
+        if (cfg_.replacement == Replacement::LRU_LIP) {
+            set.LRU_list.push_back(new_block);
+        } else {
+            set.LRU_list.push_front(new_block);
+        }
+        return;
     }
 
+    // ===== WTWNA path — mirror of project1's insert_new_block_to_L2 =====
     tag_meta_t new_block;
     new_block.block_addr = block_addr;
     new_block.tag        = tag;
     new_block.valid      = true;
-    new_block.dirty      = false;
+    new_block.dirty      = false; // WTWNA never produces dirty blocks
     new_block.prefetched = is_prefetch;
 
-    auto& set = rows[static_cast<std::size_t>(index)];
-
-    // ---------- WBWA: cache gets a new block ----------
     if (set.LRU_list.size() == assoc) {
-        // Evict LRU; if dirty, count a writeback. Project1's L1 logic.
-        if (set.LRU_list.back().dirty) {
-            ++stats_.writebacks;
-            // Propagation to next level lands in Phase 2.3 with the L2 hookup.
+        // Evict LRU. If the victim was a prefetched block that never got
+        // touched as a demand hit, count it as a wasted prefetch.
+        if (set.LRU_list.back().prefetched) {
+            ++stats_.prefetch_misses;
         }
         set.LRU_list.pop_back();
     }
 
-    // WBWA: a write hit causes the block to become dirty immediately.
-    if (rw == 'W') {
-        new_block.dirty = true;
-    }
-
-    // MIP or LIP based on the configured replacement policy. Mirrors
-    // project1's L2 path; project1's L1 was hardcoded MIP.
     if (cfg_.replacement == Replacement::LRU_LIP) {
         set.LRU_list.push_back(new_block);
     } else {
         set.LRU_list.push_front(new_block);
     }
 }
+
+namespace {
+
+// Helper: search a set for a matching valid block. On hit, splice to MRU.
+// Returns iterator (end on miss). Mirror of project1's L1/L2 search loops.
+std::list<tag_meta_t>::iterator
+find_and_promote(std::list<tag_meta_t>& lru_list, std::uint64_t tag) {
+    for (auto block = lru_list.begin(); block != lru_list.end(); ++block) {
+        if (block->tag == tag && block->valid) {
+            lru_list.splice(lru_list.begin(), lru_list, block);
+            return lru_list.begin();
+        }
+    }
+    return lru_list.end();
+}
+
+} // namespace
 
 AccessResult Cache::access(const MemReq& req) {
     const char rw = rw_of(req.op);
@@ -100,30 +140,84 @@ AccessResult Cache::access(const MemReq& req) {
 
     auto& set = rows[static_cast<std::size_t>(index)];
 
-    bool HIT = false;
+    if (cfg_.write_policy == WritePolicy::WBWA) {
+        // ===== WBWA access path — mirror of project1's L1 sim_access =====
+        bool HIT = false;
 
-    // Look up in the set; mirror of project1's L1 search loop.
-    for (auto block = set.LRU_list.begin(); block != set.LRU_list.end(); ++block) {
+        for (auto block = set.LRU_list.begin();
+             block != set.LRU_list.end(); ++block) {
+            if (block->tag == tag && block->valid) {
+                HIT = true;
+                if (rw == 'W') {
+                    block->dirty = true; // WBWA: write hit -> dirty
+                }
+                set.LRU_list.splice(set.LRU_list.begin(), set.LRU_list, block);
+                break;
+            }
+        }
+
+        if (HIT) {
+            ++stats_.hits;
+        } else {
+            ++stats_.misses;
+            // L1 miss: fill from next level (always a read at the next
+            // level — write-allocate also issues a read fetch).
+            if (cfg_.next_level) {
+                cfg_.next_level->access(
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+            } else if (cfg_.main_memory) {
+                cfg_.main_memory->access(
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+            }
+            insert_new_block(rw, tag, index, block_addr, /*is_prefetch=*/false);
+        }
+
+        AccessResult r;
+        r.hit     = HIT;
+        r.latency = cfg_.hit_latency;
+        return r;
+    }
+
+    // ===== WTWNA access path — mirror of project1's L2 logic =====
+    if (rw == 'W') {
+        // WTWNA write: project1's write_op_L2.
+        //   - Search; on hit, splice to MRU (no dirty update).
+        //   - On miss, do nothing (no allocate).
+        auto it = find_and_promote(set.LRU_list, tag);
+        AccessResult r;
+        r.hit     = (it != set.LRU_list.end());
+        r.latency = cfg_.hit_latency;
+        return r;
+    }
+
+    // WTWNA read: project1's L2 read path inside sim_access.
+    bool HIT = false;
+    for (auto block = set.LRU_list.begin();
+         block != set.LRU_list.end(); ++block) {
         if (block->tag == tag && block->valid) {
             HIT = true;
-            if (rw == 'W') {
-                block->dirty = true; // WBWA: write hit makes block dirty
+            if (block->prefetched) {
+                ++stats_.prefetch_hits;
+                block->prefetched = false; // demand-touched, clear the tag
             }
-            // Update LRU: splice the hit block to MRU (front).
             set.LRU_list.splice(set.LRU_list.begin(), set.LRU_list, block);
             break;
         }
     }
 
     if (HIT) {
-        ++stats_.hits;
+        ++stats_.read_hits;
     } else {
-        ++stats_.misses;
-        // L1 miss servicing path. Project1 dispatched to L2 here when L2
-        // was enabled. With next_level == nullptr (this commit), we just
-        // allocate the block locally — the miss-fill data is "served by
-        // memory" implicitly. Real L2 chaining lands in Phase 2.3.
-        insert_new_block(rw, tag, index, block_addr, /*is_prefetch=*/false);
+        ++stats_.read_misses;
+        insert_new_block('R', tag, index, block_addr, /*is_prefetch=*/false);
+        // L2 miss => fill from main memory (next level beyond L2).
+        if (cfg_.next_level) {
+            cfg_.next_level->access(
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+        } else if (cfg_.main_memory) {
+            cfg_.main_memory->access(
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+        }
     }
 
     AccessResult r;
