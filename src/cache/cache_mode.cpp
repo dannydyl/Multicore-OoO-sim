@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "comparch/cache/prefetcher.hpp"
+#include "comparch/cache/prefetcher_hybrid.hpp"
 #include "comparch/cache/prefetcher_markov.hpp"
 #include "comparch/cache/prefetcher_plus_one.hpp"
 #include "comparch/log.hpp"
@@ -98,6 +99,10 @@ std::unique_ptr<Prefetcher> make_prefetcher(const CacheLevelConfig& level) {
     if (name == "plus_one") return std::make_unique<PlusOnePrefetcher>();
     if (name == "markov") {
         return std::make_unique<MarkovPrefetcher>(
+            static_cast<unsigned>(level.n_markov_rows));
+    }
+    if (name == "hybrid") {
+        return std::make_unique<HybridPrefetcher>(
             static_cast<unsigned>(level.n_markov_rows));
     }
     throw ConfigError("unknown prefetcher: " + name);
