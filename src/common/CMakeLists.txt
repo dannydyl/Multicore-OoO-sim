@@ -1,4 +1,5 @@
 add_library(casim_common STATIC
+    config.cpp
     log.cpp
 )
 

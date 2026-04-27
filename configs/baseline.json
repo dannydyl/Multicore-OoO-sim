@@ -1,0 +1,48 @@
+{
+  "cores": 4,
+  "interconnect": {
+    "topology": "ring",
+    "link_latency": 1
+  },
+  "memory": {
+    "latency": 100,
+    "block_size": 64
+  },
+  "core": {
+    "fetch_width": 4,
+    "rob_entries": 96,
+    "schedq_entries_per_fu": 2,
+    "alu_fus": 3,
+    "mul_fus": 2,
+    "lsu_fus": 2,
+    "alu_stages": 1,
+    "mul_stages": 3,
+    "lsu_stages": 1,
+    "predictor": {
+      "type": "yeh_patt",
+      "history_bits": 10,
+      "pattern_bits": 5
+    }
+  },
+  "l1": {
+    "size_kb": 32,
+    "block_size": 64,
+    "assoc": 8,
+    "replacement": "lru",
+    "write_policy": "writeback",
+    "prefetcher": "none",
+    "hit_latency": 2
+  },
+  "l2": {
+    "size_kb": 256,
+    "block_size": 64,
+    "assoc": 8,
+    "replacement": "lip",
+    "write_policy": "writeback",
+    "prefetcher": "markov",
+    "hit_latency": 10
+  },
+  "coherence": {
+    "protocol": "mesi"
+  }
+}
