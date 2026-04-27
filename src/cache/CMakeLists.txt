@@ -1,5 +1,8 @@
 add_library(casim_cache STATIC
-    dummy.cpp
+    cache.cpp
+    main_memory.cpp
+    replacement.cpp
+    write_policy.cpp
 )
 
 target_include_directories(casim_cache

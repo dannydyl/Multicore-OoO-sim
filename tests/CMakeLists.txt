@@ -46,3 +46,17 @@ target_link_libraries(test_gen_trace
 )
 
 catch_discover_tests(test_gen_trace)
+
+add_executable(test_cache
+    cache/test_cache_basic.cpp
+)
+
+target_link_libraries(test_cache
+    PRIVATE
+        casim_cache
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_cache)
