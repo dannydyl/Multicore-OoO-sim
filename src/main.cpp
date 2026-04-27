@@ -1,8 +1,8 @@
-#include <iostream>
-
+#include "comparch/log.hpp"
 #include "comparch/version.hpp"
 
 int main() {
-    std::cout << "sim " << comparch::kVersion << " (phase 0 stub)\n";
+    LOG_INFO("sim " << comparch::kVersion << " (phase 0 stub)");
+    LOG_DEBUG("debug-level message (suppressed by default threshold)");
     return 0;
 }

@@ -1,5 +1,5 @@
 add_library(casim_common STATIC
-    placeholder.cpp
+    log.cpp
 )
 
 target_include_directories(casim_common
