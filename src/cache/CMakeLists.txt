@@ -1,5 +1,6 @@
 add_library(casim_cache STATIC
     cache.cpp
+    cache_mode.cpp
     main_memory.cpp
     replacement.cpp
     write_policy.cpp
@@ -10,5 +11,6 @@ target_include_directories(casim_cache
 )
 
 target_link_libraries(casim_cache
+    PUBLIC  casim_common
     PRIVATE casim_warnings casim_options
 )

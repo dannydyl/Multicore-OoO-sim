@@ -1,9 +1,11 @@
 #include <fstream>
 #include <iostream>
 
+#include "comparch/cache/cache_mode.hpp"
 #include "comparch/cli.hpp"
 #include "comparch/config.hpp"
 #include "comparch/log.hpp"
+#include "comparch/trace.hpp"
 #include "comparch/version.hpp"
 
 int main(int argc, char** argv) {
@@ -25,8 +27,20 @@ int main(int argc, char** argv) {
     }
     comparch::apply_overrides(cfg, cli);
 
+    if (cli.mode == comparch::Mode::Cache) {
+        try {
+            return comparch::cache::run_cache_mode(cfg, cli);
+        } catch (const comparch::ConfigError& e) {
+            LOG_ERROR(e.what());
+            return 2;
+        } catch (const comparch::trace::TraceError& e) {
+            LOG_ERROR("trace: " << e.what());
+            return 4;
+        }
+    }
+
     if (cli.trace) {
-        LOG_INFO("trace path: " << *cli.trace << " (Phase 1 will read this)");
+        LOG_INFO("trace path: " << *cli.trace);
     }
 
     const std::string dumped = comparch::dump_config(cfg);
@@ -43,6 +57,6 @@ int main(int argc, char** argv) {
         std::cout << dumped << '\n';
     }
 
-    LOG_INFO("phase 0: nothing simulated; exiting");
+    LOG_INFO(comparch::to_string(cli.mode) << ": no driver yet; exiting");
     return 0;
 }
