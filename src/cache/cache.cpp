@@ -61,13 +61,16 @@ void Cache::insert_new_block(char rw,
         new_block.prefetched = is_prefetch;
 
         if (set.LRU_list.size() == assoc) {
-            // Evict LRU; if dirty, count writeback and propagate to next level.
+            // Evict LRU; if dirty, count writeback and propagate downstream.
             if (set.LRU_list.back().dirty) {
                 ++stats_.writebacks;
+                const std::uint64_t victim_byte_addr =
+                    set.LRU_list.back().block_addr << cfg_.b;
                 if (cfg_.next_level) {
-                    const std::uint64_t victim_byte_addr =
-                        set.LRU_list.back().block_addr << cfg_.b;
                     cfg_.next_level->access(
+                        MemReq{victim_byte_addr, Op::Write, /*pc=*/0});
+                } else if (cfg_.main_memory) {
+                    cfg_.main_memory->access(
                         MemReq{victim_byte_addr, Op::Write, /*pc=*/0});
                 }
             }

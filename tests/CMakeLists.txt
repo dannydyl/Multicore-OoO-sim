@@ -51,6 +51,7 @@ add_executable(test_cache
     cache/test_cache_basic.cpp
     cache/test_replacement.cpp
     cache/test_l1_l2.cpp
+    cache/test_l2_wbwa.cpp
 )
 
 target_link_libraries(test_cache
