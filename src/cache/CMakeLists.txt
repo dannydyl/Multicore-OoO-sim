@@ -2,6 +2,7 @@ add_library(casim_cache STATIC
     cache.cpp
     cache_mode.cpp
     main_memory.cpp
+    prefetcher_markov.cpp
     prefetcher_plus_one.cpp
     replacement.cpp
     write_policy.cpp

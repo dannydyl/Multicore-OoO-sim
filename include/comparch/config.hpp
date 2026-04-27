@@ -52,6 +52,7 @@ struct CacheLevelConfig {
     std::string write_policy = "writeback";
     std::string prefetcher = "none";
     int hit_latency = 2;
+    int n_markov_rows = 0; // only used by markov / hybrid prefetchers
 };
 
 struct CoherenceConfig {

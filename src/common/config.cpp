@@ -90,6 +90,7 @@ void to_json(nlohmann::json& j, const CacheLevelConfig& v) {
         {"write_policy", v.write_policy},
         {"prefetcher", v.prefetcher},
         {"hit_latency", v.hit_latency},
+        {"n_markov_rows", v.n_markov_rows},
     };
 }
 void from_json(const nlohmann::json& j, CacheLevelConfig& v) {
@@ -100,6 +101,9 @@ void from_json(const nlohmann::json& j, CacheLevelConfig& v) {
     j.at("write_policy").get_to(v.write_policy);
     j.at("prefetcher").get_to(v.prefetcher);
     j.at("hit_latency").get_to(v.hit_latency);
+    if (j.contains("n_markov_rows")) {
+        j.at("n_markov_rows").get_to(v.n_markov_rows);
+    }
 }
 
 void to_json(nlohmann::json& j, const CoherenceConfig& v) {

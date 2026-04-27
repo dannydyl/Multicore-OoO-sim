@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "comparch/cache/prefetcher.hpp"
+#include "comparch/cache/prefetcher_markov.hpp"
 #include "comparch/cache/prefetcher_plus_one.hpp"
 #include "comparch/log.hpp"
 #include "comparch/trace.hpp"
@@ -91,9 +92,14 @@ MainMemory::Config to_memory_config(const MemoryConfig& mem) {
 
 namespace {
 
-std::unique_ptr<Prefetcher> make_prefetcher(const std::string& name) {
+std::unique_ptr<Prefetcher> make_prefetcher(const CacheLevelConfig& level) {
+    const auto& name = level.prefetcher;
     if (name == "none")     return nullptr;
     if (name == "plus_one") return std::make_unique<PlusOnePrefetcher>();
+    if (name == "markov") {
+        return std::make_unique<MarkovPrefetcher>(
+            static_cast<unsigned>(level.n_markov_rows));
+    }
     throw ConfigError("unknown prefetcher: " + name);
 }
 
@@ -109,7 +115,7 @@ int run_cache_mode(const SimConfig& cfg, const CliArgs& cli) {
 
     auto l2_cc = to_cache_config(cfg.l2);
     l2_cc.main_memory = &mem;
-    l2_cc.prefetcher  = make_prefetcher(cfg.l2.prefetcher);
+    l2_cc.prefetcher  = make_prefetcher(cfg.l2);
     // peer_above is patched after L1 is constructed; set below.
     Cache l2(std::move(l2_cc), "L2");
 

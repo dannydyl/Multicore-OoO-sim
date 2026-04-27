@@ -40,7 +40,8 @@
     "replacement": "lip",
     "write_policy": "writeback",
     "prefetcher": "markov",
-    "hit_latency": 10
+    "hit_latency": 10,
+    "n_markov_rows": 64
   },
   "coherence": {
     "protocol": "mesi"
