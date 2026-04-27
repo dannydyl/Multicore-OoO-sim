@@ -55,6 +55,7 @@ add_executable(test_cache
     cache/test_prefetcher_plus_one.cpp
     cache/test_prefetcher_markov.cpp
     cache/test_prefetcher_hybrid.cpp
+    cache/test_proj1_regression.cpp
 )
 
 target_link_libraries(test_cache
@@ -63,6 +64,11 @@ target_link_libraries(test_cache
         Catch2::Catch2WithMain
         casim_warnings
         casim_options
+)
+
+target_compile_definitions(test_cache
+    PRIVATE
+        PROJ1_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/cache/fixtures/proj1"
 )
 
 catch_discover_tests(test_cache)
