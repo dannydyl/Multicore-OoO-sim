@@ -2,6 +2,7 @@ add_library(casim_common STATIC
     cli.cpp
     config.cpp
     log.cpp
+    trace.cpp
 )
 
 target_include_directories(casim_common

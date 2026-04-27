@@ -18,3 +18,17 @@ target_compile_definitions(test_config
 )
 
 catch_discover_tests(test_config)
+
+add_executable(test_trace
+    common/test_trace.cpp
+)
+
+target_link_libraries(test_trace
+    PRIVATE
+        casim_common
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_trace)
