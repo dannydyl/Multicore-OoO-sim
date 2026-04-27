@@ -36,13 +36,24 @@ being assembled incrementally; the current state is **Phase 0 (skeleton only)**.
 
 ## Build
 
-Requires a C++20 compiler and CMake 3.20 or newer.
+Requires a C++20 compiler and CMake 3.21 or newer.
+
+```sh
+cmake --preset default
+cmake --build --preset default -j
+ctest --preset default
+```
+
+Or without presets:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
+
+Available presets: `default` (Debug), `release` (-O3), `asan` (AddressSanitizer),
+`ci` (Debug + -Werror, the configuration CI runs).
 
 The first configure downloads dependencies (nlohmann/json, CLI11, Catch2) into
 `build/_deps/`. Subsequent configures are fast.
