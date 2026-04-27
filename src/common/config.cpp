@@ -16,6 +16,15 @@ std::string_view to_string(Mode m) {
     return "?";
 }
 
+std::optional<Mode> parse_mode(std::string_view s) {
+    if (s == "full")      return Mode::Full;
+    if (s == "cache")     return Mode::Cache;
+    if (s == "predictor") return Mode::Predictor;
+    if (s == "ooo")       return Mode::Ooo;
+    if (s == "coherence") return Mode::Coherence;
+    return std::nullopt;
+}
+
 void to_json(nlohmann::json& j, const InterconnectConfig& v) {
     j = nlohmann::json{{"topology", v.topology}, {"link_latency", v.link_latency}};
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -12,6 +13,7 @@ namespace comparch {
 enum class Mode { Full, Cache, Predictor, Ooo, Coherence };
 
 std::string_view to_string(Mode m);
+std::optional<Mode> parse_mode(std::string_view s);
 
 struct InterconnectConfig {
     std::string topology = "ring";
