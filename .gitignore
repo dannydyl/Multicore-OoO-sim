@@ -35,7 +35,8 @@ compile_commands.json
 Thumbs.db
 
 # Misc
-core
+/core
+core.[0-9]*
 *.log
 out.json
 *.profraw
