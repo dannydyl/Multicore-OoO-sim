@@ -32,3 +32,17 @@ target_link_libraries(test_trace
 )
 
 catch_discover_tests(test_trace)
+
+add_executable(test_gen_trace
+    tools/test_gen_trace.cpp
+)
+
+target_link_libraries(test_gen_trace
+    PRIVATE
+        casim_gen_trace
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_gen_trace)

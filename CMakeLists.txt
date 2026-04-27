@@ -50,6 +50,7 @@ add_subdirectory(src/ooo)
 add_subdirectory(src/coherence)
 add_subdirectory(src/core)
 add_subdirectory(src)
+add_subdirectory(tools)
 
 if(CASIM_BUILD_TESTS)
     enable_testing()
