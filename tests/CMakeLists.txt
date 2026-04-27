@@ -52,6 +52,7 @@ add_executable(test_cache
     cache/test_replacement.cpp
     cache/test_l1_l2.cpp
     cache/test_l2_wbwa.cpp
+    cache/test_prefetcher_plus_one.cpp
 )
 
 target_link_libraries(test_cache

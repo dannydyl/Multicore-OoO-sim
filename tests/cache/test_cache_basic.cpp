@@ -108,7 +108,7 @@ TEST_CASE("Geometry helpers match project1's tag/index split",
           "[cache][geometry]") {
     Cache::Config c;
     c.c = 10; c.b = 6; c.s = 1; // 8 sets, 2 ways, 64 B blocks
-    Cache l1(c, "L1");
+    Cache l1(std::move(c), "L1");
 
     // index_bit = c - b - s = 3 -> 8 sets.
     // block_addr = addr >> 6.

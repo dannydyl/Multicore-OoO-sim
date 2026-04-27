@@ -4,11 +4,12 @@
 #include <utility>
 
 #include "comparch/cache/main_memory.hpp"
+#include "comparch/cache/prefetcher.hpp"
 
 namespace comparch::cache {
 
 Cache::Cache(Config cfg, std::string name)
-    : cfg_(cfg), name_(std::move(name)) {
+    : cfg_(std::move(cfg)), name_(std::move(name)) {
     if (cfg_.c <= cfg_.b + cfg_.s) {
         throw std::invalid_argument(
             "cache geometry: require c > b + s (sets >= 1)");
@@ -42,6 +43,22 @@ bool Cache::is_in_cache(std::uint64_t tag, std::uint64_t index) const {
         }
     }
     return false;
+}
+
+bool Cache::block_in(std::uint64_t byte_addr) const {
+    const std::uint64_t block_addr = get_block_addr(byte_addr);
+    return is_in_cache(get_tag(block_addr), get_index(block_addr));
+}
+
+void Cache::issue_prefetch(std::uint64_t byte_addr) {
+    const std::uint64_t block_addr = get_block_addr(byte_addr);
+    const std::uint64_t tag        = get_tag(block_addr);
+    const std::uint64_t index      = get_index(block_addr);
+    if (is_in_cache(tag, index)) {
+        return; // already present; nothing to do
+    }
+    insert_new_block('R', tag, index, block_addr, /*is_prefetch=*/true);
+    ++stats_.prefetches_issued;
 }
 
 void Cache::insert_new_block(char rw,
@@ -151,6 +168,10 @@ AccessResult Cache::access(const MemReq& req) {
              block != set.LRU_list.end(); ++block) {
             if (block->tag == tag && block->valid) {
                 HIT = true;
+                if (block->prefetched) {
+                    ++stats_.prefetch_hits;
+                    block->prefetched = false;
+                }
                 if (rw == 'W') {
                     block->dirty = true; // WBWA: write hit -> dirty
                 }
@@ -173,6 +194,9 @@ AccessResult Cache::access(const MemReq& req) {
                     MemReq{block_addr << cfg_.b, Op::Read, req.pc});
             }
             insert_new_block(rw, tag, index, block_addr, /*is_prefetch=*/false);
+            if (cfg_.prefetcher) {
+                cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
+            }
         }
 
         AccessResult r;
@@ -220,6 +244,9 @@ AccessResult Cache::access(const MemReq& req) {
         } else if (cfg_.main_memory) {
             cfg_.main_memory->access(
                 MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+        }
+        if (cfg_.prefetcher) {
+            cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
         }
     }
 

@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "comparch/cache/cache_stats.hpp"
 #include "comparch/cache/mem_req.hpp"
+#include "comparch/cache/prefetcher.hpp"
 #include "comparch/cache/replacement.hpp"
 #include "comparch/cache/write_policy.hpp"
 
@@ -43,6 +45,12 @@ public:
 
         Cache*      next_level    = nullptr;
         MainMemory* main_memory   = nullptr;
+
+        // Prefetcher attached to this level. Invoked after demand misses.
+        std::unique_ptr<Prefetcher> prefetcher;
+        // Peer cache one level up — prefetchers consult this to avoid
+        // bringing blocks already resident there.
+        Cache*      peer_above   = nullptr;
     };
 
     Cache(Config cfg, std::string name);
@@ -59,6 +67,17 @@ public:
                                    std::uint64_t index,
                                    std::uint64_t block_addr,
                                    bool is_prefetch);
+
+    // True iff the block containing `byte_addr` is currently resident.
+    bool          block_in(std::uint64_t byte_addr) const;
+
+    // Prefetch helper: if not already resident, allocate the block tagged
+    // as a prefetched fill and bump the issued-prefetch counter.
+    void          issue_prefetch(std::uint64_t byte_addr);
+
+    // Patch the upstream peer pointer post-construction (resolves the
+    // L1<->L2 circular reference that prefetchers consult).
+    void          set_peer_above(Cache* peer) { cfg_.peer_above = peer; }
 
     std::uint64_t get_tag(std::uint64_t block_addr) const;
     std::uint64_t get_index(std::uint64_t block_addr) const;

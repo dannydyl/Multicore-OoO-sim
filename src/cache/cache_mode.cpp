@@ -7,6 +7,8 @@
 #include <memory>
 #include <sstream>
 
+#include "comparch/cache/prefetcher.hpp"
+#include "comparch/cache/prefetcher_plus_one.hpp"
 #include "comparch/log.hpp"
 #include "comparch/trace.hpp"
 
@@ -87,6 +89,16 @@ MainMemory::Config to_memory_config(const MemoryConfig& mem) {
     return m;
 }
 
+namespace {
+
+std::unique_ptr<Prefetcher> make_prefetcher(const std::string& name) {
+    if (name == "none")     return nullptr;
+    if (name == "plus_one") return std::make_unique<PlusOnePrefetcher>();
+    throw ConfigError("unknown prefetcher: " + name);
+}
+
+} // namespace
+
 int run_cache_mode(const SimConfig& cfg, const CliArgs& cli) {
     if (!cli.trace) {
         LOG_ERROR("--mode cache requires --trace");
@@ -97,11 +109,15 @@ int run_cache_mode(const SimConfig& cfg, const CliArgs& cli) {
 
     auto l2_cc = to_cache_config(cfg.l2);
     l2_cc.main_memory = &mem;
-    Cache l2(l2_cc, "L2");
+    l2_cc.prefetcher  = make_prefetcher(cfg.l2.prefetcher);
+    // peer_above is patched after L1 is constructed; set below.
+    Cache l2(std::move(l2_cc), "L2");
 
     auto l1_cc = to_cache_config(cfg.l1);
     l1_cc.next_level = &l2;
-    Cache l1(l1_cc, "L1");
+    Cache l1(std::move(l1_cc), "L1");
+
+    l2.set_peer_above(&l1);
 
     LOG_INFO("cache mode: L1 " << cfg.l1.size_kb << "KB / "
              << cfg.l1.assoc  << "-way / " << cfg.l1.write_policy
