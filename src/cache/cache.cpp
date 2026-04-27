@@ -78,8 +78,13 @@ void Cache::insert_new_block(char rw,
         new_block.dirty = true;
     }
 
-    // MIP only for now (matches project1's L1 hardcoded behavior).
-    set.LRU_list.push_front(new_block);
+    // MIP or LIP based on the configured replacement policy. Mirrors
+    // project1's L2 path; project1's L1 was hardcoded MIP.
+    if (cfg_.replacement == Replacement::LRU_LIP) {
+        set.LRU_list.push_back(new_block);
+    } else {
+        set.LRU_list.push_front(new_block);
+    }
 }
 
 AccessResult Cache::access(const MemReq& req) {
