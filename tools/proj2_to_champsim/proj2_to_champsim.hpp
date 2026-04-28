@@ -13,7 +13,7 @@
 //
 // project2 line shape (whitespace-separated):
 //
-//   pc opcode dest src1 src2 load_store_addr br_taken br_target \
+//   pc opcode dest src1 src2 load_store_addr br_taken br_target
 //       icache_hit dcache_hit dyn_instruction_count
 //
 // Numeric formats: pc / load_store_addr / br_target are hex without 0x prefix;
