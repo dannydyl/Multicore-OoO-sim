@@ -94,6 +94,20 @@ target_compile_definitions(test_predictor
 
 catch_discover_tests(test_predictor)
 
+add_executable(test_ooo
+    ooo/test_ooo_basic.cpp
+)
+
+target_link_libraries(test_ooo
+    PRIVATE
+        casim_ooo
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_ooo)
+
 add_executable(test_proj2_to_champsim
     tools/test_proj2_to_champsim.cpp
 )

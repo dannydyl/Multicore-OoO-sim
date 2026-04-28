@@ -5,6 +5,7 @@
 #include "comparch/cli.hpp"
 #include "comparch/config.hpp"
 #include "comparch/log.hpp"
+#include "comparch/ooo/ooo_mode.hpp"
 #include "comparch/predictor/predictor_mode.hpp"
 #include "comparch/trace.hpp"
 #include "comparch/version.hpp"
@@ -43,6 +44,18 @@ int main(int argc, char** argv) {
     if (cli.mode == comparch::Mode::Predictor) {
         try {
             return comparch::predictor::run_predictor_mode(cfg, cli);
+        } catch (const comparch::ConfigError& e) {
+            LOG_ERROR(e.what());
+            return 2;
+        } catch (const comparch::trace::TraceError& e) {
+            LOG_ERROR("trace: " << e.what());
+            return 4;
+        }
+    }
+
+    if (cli.mode == comparch::Mode::Ooo) {
+        try {
+            return comparch::ooo::run_ooo_mode(cfg, cli);
         } catch (const comparch::ConfigError& e) {
             LOG_ERROR(e.what());
             return 2;
