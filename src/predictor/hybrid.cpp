@@ -36,6 +36,7 @@
 #include "comparch/predictor/predictor.hpp"
 #include "comparch/predictor/saturating_counter.hpp"
 
+#include <cassert>
 #include <sstream>
 #include <vector>
 
@@ -60,6 +61,16 @@ unsigned init_value_for(int hybrid_init, int counter_bits) {
     }
 }
 
+// Contract: callers MUST call predict() exactly once before each update()
+// for the same branch. Hybrid caches each sub-predictor's prediction in
+// member variables so update() can decide whether to move the tournament
+// counter and how to train each sub-predictor; calling predict() twice in
+// a row would overwrite the cached state for the unfinished branch and
+// silently train the tournament selector against the wrong outcomes.
+//
+// In debug builds we toggle `pending_update_` on each call and assert it
+// flips correctly, so misuse trips immediately. In release builds the
+// assertion vanishes and the contract is the caller's responsibility.
 class Hybrid final : public BranchPredictor {
 public:
     Hybrid(const PredictorConfig& cfg)
@@ -72,6 +83,10 @@ public:
                                                        cfg.tournament_counter_bits))) {}
 
     bool predict(const Branch& b) override {
+        assert(!pending_update_ &&
+               "Hybrid::predict called twice without an intervening update()");
+        pending_update_ = true;
+
         const std::uint64_t idx = (b.ip >> 2) & tnmt_mask_;
         // The MSB of the selector counter picks which sub-predictor to trust
         // for this branch. Low bits encode confidence in that choice.
@@ -86,6 +101,10 @@ public:
     }
 
     void update(const Branch& b, bool /*prediction*/) override {
+        assert(pending_update_ &&
+               "Hybrid::update called without a matching predict()");
+        pending_update_ = false;
+
         const std::uint64_t idx = (b.ip >> 2) & tnmt_mask_;
 
         // Selector training: only when the two predictors disagreed do we
@@ -119,6 +138,10 @@ private:
     // tournament counter and how to train each sub-predictor.
     bool last_yp_  = false;
     bool last_pct_ = false;
+
+    // Debug-only contract guard: true between predict() and update(), false
+    // otherwise. See class-level comment for the misuse it catches.
+    bool pending_update_ = false;
 };
 
 [[nodiscard]] bool in_range(int x, int lo, int hi) { return x >= lo && x <= hi; }

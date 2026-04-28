@@ -28,6 +28,13 @@ struct Branch {
 //                        predictor->update(b, p);
 // Predict and update are intentionally separate so a future OoO pipeline can
 // delay update() until the branch resolves.
+//
+// PHASE4 limit: speculative execution will need a way to checkpoint the
+// predictor at predict-time and either commit or roll back at branch
+// resolve, which today's predict()/update() pair can't express. The plan
+// is to add `Checkpoint predict_speculative(const Branch&)` and
+// `void resolve(Checkpoint, bool actual)` alongside (not in place of)
+// the current methods, so --mode predictor keeps using the simple API.
 class BranchPredictor {
 public:
     virtual ~BranchPredictor() = default;

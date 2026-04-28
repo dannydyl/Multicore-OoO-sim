@@ -1,7 +1,8 @@
 #pragma once
 
-#include <cassert>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 
 namespace comparch::predictor {
 
@@ -24,8 +25,20 @@ class SaturatingCounter {
 public:
     SaturatingCounter(int bits, unsigned init)
         : bits_(bits), value_(init) {
-        assert(bits_ >= 1 && bits_ <= 31);
-        assert(value_ <= max());
+        // Runtime-checked precondition (vs. assert) so the bound survives
+        // -DNDEBUG. The factory layers already validate user-driven sizes;
+        // these throws only fire on internal misuse.
+        if (bits_ < 1 || bits_ > 31) {
+            throw std::invalid_argument(
+                "SaturatingCounter: bits must be in [1, 31] (got "
+                + std::to_string(bits_) + ")");
+        }
+        if (value_ > max()) {
+            throw std::invalid_argument(
+                "SaturatingCounter: init " + std::to_string(value_)
+                + " exceeds max " + std::to_string(max())
+                + " for " + std::to_string(bits_) + "-bit counter");
+        }
     }
 
     // The widest representable value, 2^bits - 1.

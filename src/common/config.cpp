@@ -25,20 +25,28 @@ std::optional<Mode> parse_mode(std::string_view s) {
     return std::nullopt;
 }
 
+// All from_json overloads use j.value("key", v.field) which falls back to the
+// struct's default (held in `v` because nlohmann constructs a default-initialized
+// instance before calling from_json). This means a partial JSON like
+// `{"predictor": {"type": "perceptron"}}` fills in every other field from
+// the C++ defaults instead of throwing on the first missing key. Type
+// mismatches still throw, so a misspelled key value (e.g. cores: "four") is
+// still caught.
+
 void to_json(nlohmann::json& j, const InterconnectConfig& v) {
     j = nlohmann::json{{"topology", v.topology}, {"link_latency", v.link_latency}};
 }
 void from_json(const nlohmann::json& j, InterconnectConfig& v) {
-    j.at("topology").get_to(v.topology);
-    j.at("link_latency").get_to(v.link_latency);
+    v.topology     = j.value("topology",     v.topology);
+    v.link_latency = j.value("link_latency", v.link_latency);
 }
 
 void to_json(nlohmann::json& j, const MemoryConfig& v) {
     j = nlohmann::json{{"latency", v.latency}, {"block_size", v.block_size}};
 }
 void from_json(const nlohmann::json& j, MemoryConfig& v) {
-    j.at("latency").get_to(v.latency);
-    j.at("block_size").get_to(v.block_size);
+    v.latency    = j.value("latency",    v.latency);
+    v.block_size = j.value("block_size", v.block_size);
 }
 
 void to_json(nlohmann::json& j, const PredictorConfig& v) {
@@ -54,24 +62,14 @@ void to_json(nlohmann::json& j, const PredictorConfig& v) {
     };
 }
 void from_json(const nlohmann::json& j, PredictorConfig& v) {
-    j.at("type").get_to(v.type);
-    j.at("history_bits").get_to(v.history_bits);
-    j.at("pattern_bits").get_to(v.pattern_bits);
-    if (j.contains("perceptron_history_bits")) {
-        j.at("perceptron_history_bits").get_to(v.perceptron_history_bits);
-    }
-    if (j.contains("perceptron_index_bits")) {
-        j.at("perceptron_index_bits").get_to(v.perceptron_index_bits);
-    }
-    if (j.contains("hybrid_init")) {
-        j.at("hybrid_init").get_to(v.hybrid_init);
-    }
-    if (j.contains("tournament_index_bits")) {
-        j.at("tournament_index_bits").get_to(v.tournament_index_bits);
-    }
-    if (j.contains("tournament_counter_bits")) {
-        j.at("tournament_counter_bits").get_to(v.tournament_counter_bits);
-    }
+    v.type                    = j.value("type",                    v.type);
+    v.history_bits            = j.value("history_bits",            v.history_bits);
+    v.pattern_bits            = j.value("pattern_bits",            v.pattern_bits);
+    v.perceptron_history_bits = j.value("perceptron_history_bits", v.perceptron_history_bits);
+    v.perceptron_index_bits   = j.value("perceptron_index_bits",   v.perceptron_index_bits);
+    v.hybrid_init             = j.value("hybrid_init",             v.hybrid_init);
+    v.tournament_index_bits   = j.value("tournament_index_bits",   v.tournament_index_bits);
+    v.tournament_counter_bits = j.value("tournament_counter_bits", v.tournament_counter_bits);
 }
 
 void to_json(nlohmann::json& j, const CoreConfig& v) {
@@ -89,16 +87,16 @@ void to_json(nlohmann::json& j, const CoreConfig& v) {
     };
 }
 void from_json(const nlohmann::json& j, CoreConfig& v) {
-    j.at("fetch_width").get_to(v.fetch_width);
-    j.at("rob_entries").get_to(v.rob_entries);
-    j.at("schedq_entries_per_fu").get_to(v.schedq_entries_per_fu);
-    j.at("alu_fus").get_to(v.alu_fus);
-    j.at("mul_fus").get_to(v.mul_fus);
-    j.at("lsu_fus").get_to(v.lsu_fus);
-    j.at("alu_stages").get_to(v.alu_stages);
-    j.at("mul_stages").get_to(v.mul_stages);
-    j.at("lsu_stages").get_to(v.lsu_stages);
-    j.at("predictor").get_to(v.predictor);
+    v.fetch_width           = j.value("fetch_width",           v.fetch_width);
+    v.rob_entries           = j.value("rob_entries",           v.rob_entries);
+    v.schedq_entries_per_fu = j.value("schedq_entries_per_fu", v.schedq_entries_per_fu);
+    v.alu_fus               = j.value("alu_fus",               v.alu_fus);
+    v.mul_fus               = j.value("mul_fus",               v.mul_fus);
+    v.lsu_fus               = j.value("lsu_fus",               v.lsu_fus);
+    v.alu_stages            = j.value("alu_stages",            v.alu_stages);
+    v.mul_stages            = j.value("mul_stages",            v.mul_stages);
+    v.lsu_stages            = j.value("lsu_stages",            v.lsu_stages);
+    v.predictor             = j.value("predictor",             v.predictor);
 }
 
 void to_json(nlohmann::json& j, const CacheLevelConfig& v) {
@@ -114,23 +112,21 @@ void to_json(nlohmann::json& j, const CacheLevelConfig& v) {
     };
 }
 void from_json(const nlohmann::json& j, CacheLevelConfig& v) {
-    j.at("size_kb").get_to(v.size_kb);
-    j.at("block_size").get_to(v.block_size);
-    j.at("assoc").get_to(v.assoc);
-    j.at("replacement").get_to(v.replacement);
-    j.at("write_policy").get_to(v.write_policy);
-    j.at("prefetcher").get_to(v.prefetcher);
-    j.at("hit_latency").get_to(v.hit_latency);
-    if (j.contains("n_markov_rows")) {
-        j.at("n_markov_rows").get_to(v.n_markov_rows);
-    }
+    v.size_kb       = j.value("size_kb",       v.size_kb);
+    v.block_size    = j.value("block_size",    v.block_size);
+    v.assoc         = j.value("assoc",         v.assoc);
+    v.replacement   = j.value("replacement",   v.replacement);
+    v.write_policy  = j.value("write_policy",  v.write_policy);
+    v.prefetcher    = j.value("prefetcher",    v.prefetcher);
+    v.hit_latency   = j.value("hit_latency",   v.hit_latency);
+    v.n_markov_rows = j.value("n_markov_rows", v.n_markov_rows);
 }
 
 void to_json(nlohmann::json& j, const CoherenceConfig& v) {
     j = nlohmann::json{{"protocol", v.protocol}};
 }
 void from_json(const nlohmann::json& j, CoherenceConfig& v) {
-    j.at("protocol").get_to(v.protocol);
+    v.protocol = j.value("protocol", v.protocol);
 }
 
 void to_json(nlohmann::json& j, const SimConfig& v) {
@@ -146,16 +142,14 @@ void to_json(nlohmann::json& j, const SimConfig& v) {
     };
 }
 void from_json(const nlohmann::json& j, SimConfig& v) {
-    j.at("cores").get_to(v.cores);
-    j.at("interconnect").get_to(v.interconnect);
-    j.at("memory").get_to(v.memory);
-    j.at("core").get_to(v.core);
-    j.at("l1").get_to(v.l1);
-    j.at("l2").get_to(v.l2);
-    if (j.contains("predictor")) {
-        j.at("predictor").get_to(v.predictor);
-    }
-    j.at("coherence").get_to(v.coherence);
+    v.cores        = j.value("cores",        v.cores);
+    v.interconnect = j.value("interconnect", v.interconnect);
+    v.memory       = j.value("memory",       v.memory);
+    v.core         = j.value("core",         v.core);
+    v.l1           = j.value("l1",           v.l1);
+    v.l2           = j.value("l2",           v.l2);
+    v.predictor    = j.value("predictor",    v.predictor);
+    v.coherence    = j.value("coherence",    v.coherence);
 }
 
 SimConfig load_config(const std::filesystem::path& path) {

@@ -334,6 +334,14 @@ AccessResult Cache::access(const MemReq& req) {
         // Project1's write_op_L2: writes hit -> splice; writes miss -> nothing.
         // Notice we do NOT count this in hits/misses or read_hits/read_misses;
         // project1 only reports L2 writes as a flat "writes_l2" total.
+        //
+        // Quirk vs. the WBWA hit path (line ~289) and the WTWNA read-hit
+        // path (line ~351): both of those clear `block.prefetched` and bump
+        // `prefetch_hits`. This write-hit path does neither — a prefetched
+        // line first touched by a write will not count toward prefetch_hits
+        // until/unless it later gets a read. That is faithful to project1's
+        // accounting (which is why the regression tests pass); deviating
+        // would silently change the pinned numbers, so it stays.
         auto it = find_and_promote(set.LRU_list, tag);
         AccessResult r;
         r.hit     = (it != set.LRU_list.end());
