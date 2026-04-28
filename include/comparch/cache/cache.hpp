@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "comparch/cache/cache_stats.hpp"
 #include "comparch/cache/mem_req.hpp"
+#include "comparch/cache/mshr.hpp"
 #include "comparch/cache/prefetcher.hpp"
 #include "comparch/cache/replacement.hpp"
 #include "comparch/cache/write_policy.hpp"
@@ -42,6 +44,7 @@ public:
         Replacement replacement   = Replacement::LRU_MIP;
         WritePolicy write_policy  = WritePolicy::WBWA;
         unsigned    hit_latency   = 2;
+        unsigned    mshr_entries  = 8;   // size of the MSHR table; bounds in-flight misses
 
         Cache*      next_level    = nullptr;
         MainMemory* main_memory   = nullptr;
@@ -55,11 +58,38 @@ public:
 
     Cache(Config cfg, std::string name);
 
+    // Synchronous wrapper. Mutates cache state, recurses into next_level
+    // if needed, returns a complete (hit, total round-trip latency) pair.
+    // Used by --mode cache and (internally) by issue().
     AccessResult access(const MemReq& req);
+
+    // ---- Async / MSHR-aware path used by the OoO core. ---------------------
+    //
+    // issue(): allocate an MSHR slot for `req`. Cache state is updated
+    //   immediately (the entry transitions through the same hit/miss path
+    //   as access()), but the caller polls peek(id) until `ready == true`
+    //   to mimic real cache latency. Returns std::nullopt if the MSHR is
+    //   full — the caller (LSU / fetch) stalls.
+    //
+    // peek(): non-owning read of the MSHR entry behind a given id. Returns
+    //   nullptr if the id is unknown (already released, or never issued).
+    //
+    // complete(): release the MSHR slot once the consumer has read the
+    //   result.
+    //
+    // tick(): advance the cache's local cycle counter and flip ready bits
+    //   on any MSHR entries whose due_cycle has been reached. Drives the
+    //   cache forward by one cycle of simulator time.
+    std::optional<std::uint64_t> issue(const MemReq& req);
+    const MSHREntry*             peek(std::uint64_t id) const;
+    void                         complete(std::uint64_t id);
+    void                         tick();
 
     const CacheStats& stats() const { return stats_; }
     const std::string& name() const { return name_; }
     const Config&      cfg()  const { return cfg_; }
+    std::uint64_t      now()  const { return now_; }
+    const MSHR&        mshr() const { return mshr_; }
 
     // Internals exposed for prefetchers and L2 writebacks (later phases).
     bool          is_in_cache(std::uint64_t tag, std::uint64_t index) const;
@@ -94,6 +124,13 @@ private:
     std::uint64_t index_bit  = 0;
 
     std::vector<set_t> rows; // was L1_row / L2_row in project1
+
+    // Outstanding-miss table. The OoO LSU and I-fetch poll this through
+    // peek()/complete()/tick(). --mode cache never observes it (access()
+    // allocates and releases an MSHR slot internally per call).
+    MSHR          mshr_;
+    std::uint64_t now_     = 0;   // cycle counter advanced by tick()
+    std::uint64_t next_id_ = 1;   // 0 reserved as "invalid id"
 };
 
 } // namespace comparch::cache

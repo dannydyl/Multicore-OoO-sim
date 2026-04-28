@@ -114,7 +114,8 @@ Cache::Config to_cache_config(const CacheLevelConfig& level) {
     } else {
         throw ConfigError("unknown write policy: " + level.write_policy);
     }
-    cc.hit_latency = static_cast<unsigned>(level.hit_latency);
+    cc.hit_latency  = static_cast<unsigned>(level.hit_latency);
+    cc.mshr_entries = static_cast<unsigned>(level.mshr_entries);
     return cc;
 }
 

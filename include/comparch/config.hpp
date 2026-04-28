@@ -58,6 +58,7 @@ struct CacheLevelConfig {
     std::string prefetcher = "none";
     int hit_latency = 2;
     int n_markov_rows = 0; // only used by markov / hybrid prefetchers
+    int mshr_entries = 8;  // bounds in-flight misses from the OoO core
 };
 
 struct CoherenceConfig {

@@ -52,7 +52,9 @@ namespace comparch::cache {
 // We derive `assoc` (ways), `index_bit` (set-index bit count), and
 // `num_rows` (set count) from the geometry and pre-allocate the row vector.
 Cache::Cache(Config cfg, std::string name)
-    : cfg_(std::move(cfg)), name_(std::move(name)) {
+    : cfg_(std::move(cfg)),
+      name_(std::move(name)),
+      mshr_(static_cast<std::size_t>(cfg_.mshr_entries)) {
     if (cfg_.c <= cfg_.b + cfg_.s) {
         // Sanity: c > b + s otherwise there are zero sets.
         throw std::invalid_argument(
@@ -300,19 +302,22 @@ AccessResult Cache::access(const MemReq& req) {
             }
         }
 
+        unsigned downstream_latency = 0;
         if (HIT) {
             ++stats_.hits;
         } else {
             ++stats_.misses;
             // Fetch the line from downstream. Even a write-miss issues a
             // Read at the next level (write-allocate fetches the line
-            // before modifying it).
+            // before modifying it). Capture the returned latency so the
+            // round-trip we report is realistic — pre-Phase-4 we discarded
+            // it because --mode cache only counted hits/misses.
             if (cfg_.next_level) {
-                cfg_.next_level->access(
-                    MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+                downstream_latency = cfg_.next_level->access(
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
             } else if (cfg_.main_memory) {
-                cfg_.main_memory->access(
-                    MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+                downstream_latency = cfg_.main_memory->access(
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
             }
             // Allocate the new block locally. May trigger a writeback if
             // the victim was dirty.
@@ -325,7 +330,7 @@ AccessResult Cache::access(const MemReq& req) {
 
         AccessResult r;
         r.hit     = HIT;
-        r.latency = cfg_.hit_latency;
+        r.latency = cfg_.hit_latency + downstream_latency;
         return r;
     }
 
@@ -365,6 +370,7 @@ AccessResult Cache::access(const MemReq& req) {
         }
     }
 
+    unsigned downstream_latency = 0;
     if (HIT) {
         ++stats_.read_hits;
     } else {
@@ -374,11 +380,11 @@ AccessResult Cache::access(const MemReq& req) {
         // the read to memory, then run the prefetcher (matches project1).
         insert_new_block('R', tag, index, block_addr, /*is_prefetch=*/false);
         if (cfg_.next_level) {
-            cfg_.next_level->access(
-                MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+            downstream_latency = cfg_.next_level->access(
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
         } else if (cfg_.main_memory) {
-            cfg_.main_memory->access(
-                MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+            downstream_latency = cfg_.main_memory->access(
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
         }
         if (cfg_.prefetcher) {
             cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
@@ -387,8 +393,60 @@ AccessResult Cache::access(const MemReq& req) {
 
     AccessResult r;
     r.hit     = HIT;
-    r.latency = cfg_.hit_latency;
+    r.latency = cfg_.hit_latency + downstream_latency;
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// MSHR / async API. The OoO core uses these to overlap multiple in-flight
+// misses; --mode cache never sees them. The cache's hit/miss bookkeeping
+// happens immediately at issue (via the synchronous access() above), and
+// the MSHR slot just holds the result until `now_` reaches `due_cycle`.
+// ---------------------------------------------------------------------------
+std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
+    const std::uint64_t block_addr = get_block_addr(req.addr);
+
+    // If a slot already targets this block, the miss-merge fast-path lets
+    // us skip the access() call entirely — secondaries inherit the
+    // primary's timing. This keeps stats correct: a merged secondary is
+    // not a separate miss.
+    for (const auto& e : mshr_.entries()) {
+        if (e.valid && e.block_addr == block_addr) {
+            const std::uint64_t id = next_id_++;
+            (void)mshr_.allocate(id, block_addr, req.op, req.pc,
+                                 e.due_cycle, e.result);
+            return id;
+        }
+    }
+
+    // No merge candidate: drive the access through the cache hierarchy
+    // synchronously so we know the round-trip latency. This also performs
+    // all the state mutations (LRU updates, prefetcher fires, eviction
+    // writebacks) the OoO core relies on.
+    const AccessResult result = access(req);
+    const std::uint64_t due_cycle = now_ + result.latency;
+
+    const std::uint64_t id = next_id_++;
+    if (mshr_.allocate(id, block_addr, req.op, req.pc,
+                       due_cycle, result) == nullptr) {
+        // Table full: undo the id allocation and let the caller stall.
+        --next_id_;
+        return std::nullopt;
+    }
+    return id;
+}
+
+const MSHREntry* Cache::peek(std::uint64_t id) const {
+    return mshr_.find(id);
+}
+
+void Cache::complete(std::uint64_t id) {
+    mshr_.release(id);
+}
+
+void Cache::tick() {
+    ++now_;
+    mshr_.tick(now_);
 }
 
 } // namespace comparch::cache

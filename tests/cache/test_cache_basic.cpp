@@ -123,3 +123,109 @@ TEST_CASE("Geometry helpers match project1's tag/index split",
     REQUIRE(idx        == (block_addr & 0x7ULL));
     REQUIRE(tag        == (block_addr >> 3));
 }
+
+// ---------------------------------------------------------------------------
+// Async / MSHR-aware path tests. Cover what the OoO LSU will do:
+//   1. issue() returns an id, peek(id) reflects ready==false until enough
+//      ticks have elapsed.
+//   2. Two issues to the same in-flight block merge onto one slot.
+//   3. MSHR-full causes issue() to return nullopt.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Cache::issue / tick / peek / complete drive a single miss", "[cache][mshr]") {
+    auto cc = small_l1();
+    cc.hit_latency  = 2;
+    cc.mshr_entries = 4;
+    Cache l1(std::move(cc), "L1");
+
+    // First touch on 0x1000 misses; with no next_level, downstream latency
+    // is 0, so total latency == hit_latency == 2.
+    auto id = l1.issue({0x1000, Op::Read});
+    REQUIRE(id.has_value());
+
+    const auto* e = l1.peek(*id);
+    REQUIRE(e != nullptr);
+    REQUIRE_FALSE(e->ready);
+    REQUIRE(e->due_cycle == 2);
+
+    l1.tick();                                     // now_ = 1
+    REQUIRE_FALSE(l1.peek(*id)->ready);
+    l1.tick();                                     // now_ = 2; ready flips
+    REQUIRE(l1.peek(*id)->ready);
+    REQUIRE(l1.peek(*id)->result.hit == false);    // cold miss
+
+    l1.complete(*id);
+    REQUIRE(l1.peek(*id) == nullptr);
+}
+
+TEST_CASE("Cache::issue merges concurrent requests to the same block",
+          "[cache][mshr][merge]") {
+    auto cc = small_l1();
+    cc.hit_latency  = 2;
+    cc.mshr_entries = 4;
+    Cache l1(std::move(cc), "L1");
+
+    auto id1 = l1.issue({0x1000, Op::Read});
+    auto id2 = l1.issue({0x1000, Op::Read});  // same block -> merge
+    REQUIRE(id1.has_value());
+    REQUIRE(id2.has_value());
+    REQUIRE(*id1 != *id2);
+
+    // Only one MSHR slot occupied, both ids point at it.
+    REQUIRE(l1.mshr().occupancy() == 1);
+    REQUIRE(l1.peek(*id1) == l1.peek(*id2));
+
+    // Stats show only ONE miss — the secondary is not a separate access.
+    REQUIRE(l1.stats().accesses == 1);
+    REQUIRE(l1.stats().misses   == 1);
+}
+
+TEST_CASE("Cache::issue returns nullopt when MSHR is full",
+          "[cache][mshr][stall]") {
+    auto cc = small_l1();
+    cc.hit_latency  = 100;   // misses linger long enough to fill the table
+    cc.mshr_entries = 2;
+    Cache l1(std::move(cc), "L1");
+
+    auto a = l1.issue({0x1000, Op::Read});
+    auto b = l1.issue({0x2000, Op::Read});   // different blocks -> two slots
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    REQUIRE(l1.mshr().full());
+
+    // Third request to a third block has nowhere to go.
+    auto c = l1.issue({0x3000, Op::Read});
+    REQUIRE_FALSE(c.has_value());
+
+    // Releasing one slot opens room again.
+    l1.complete(*a);
+    auto d = l1.issue({0x3000, Op::Read});
+    REQUIRE(d.has_value());
+}
+
+TEST_CASE("Cache::access yields the same hit/miss as Cache::issue + peek",
+          "[cache][mshr][equiv]") {
+    // Two caches with identical config; one drives via access(), the other
+    // through issue/tick/peek/complete. Hit/miss ordering must match.
+    auto cc1 = small_l1();
+    auto cc2 = small_l1();
+    Cache l1a(std::move(cc1), "L1a");
+    Cache l1b(std::move(cc2), "L1b");
+
+    const std::uint64_t addrs[] = {0x1000, 0x1000, 0x2000, 0x1000, 0x3000};
+    for (auto a : addrs) {
+        const auto sync = l1a.access({a, Op::Read});
+        auto id = l1b.issue({a, Op::Read});
+        REQUIRE(id.has_value());
+        // Spin tick until ready (mimics what the OoO core's poll would do).
+        while (!l1b.peek(*id)->ready) l1b.tick();
+        const auto async_e = l1b.peek(*id);
+        REQUIRE(async_e->result.hit     == sync.hit);
+        REQUIRE(async_e->result.latency == sync.latency);
+        l1b.complete(*id);
+    }
+
+    REQUIRE(l1a.stats().hits    == l1b.stats().hits);
+    REQUIRE(l1a.stats().misses  == l1b.stats().misses);
+    REQUIRE(l1a.stats().accesses == l1b.stats().accesses);
+}

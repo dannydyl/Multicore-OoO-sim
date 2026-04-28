@@ -31,7 +31,8 @@
     "replacement": "lru",
     "write_policy": "writeback",
     "prefetcher": "none",
-    "hit_latency": 2
+    "hit_latency": 2,
+    "mshr_entries": 8
   },
   "l2": {
     "size_kb": 256,
@@ -41,7 +42,8 @@
     "write_policy": "writeback",
     "prefetcher": "markov",
     "hit_latency": 10,
-    "n_markov_rows": 64
+    "n_markov_rows": 64,
+    "mshr_entries": 16
   },
   "predictor": {
     "type": "yeh_patt",

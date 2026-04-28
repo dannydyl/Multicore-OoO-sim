@@ -109,6 +109,7 @@ void to_json(nlohmann::json& j, const CacheLevelConfig& v) {
         {"prefetcher", v.prefetcher},
         {"hit_latency", v.hit_latency},
         {"n_markov_rows", v.n_markov_rows},
+        {"mshr_entries", v.mshr_entries},
     };
 }
 void from_json(const nlohmann::json& j, CacheLevelConfig& v) {
@@ -120,6 +121,7 @@ void from_json(const nlohmann::json& j, CacheLevelConfig& v) {
     v.prefetcher    = j.value("prefetcher",    v.prefetcher);
     v.hit_latency   = j.value("hit_latency",   v.hit_latency);
     v.n_markov_rows = j.value("n_markov_rows", v.n_markov_rows);
+    v.mshr_entries  = j.value("mshr_entries",  v.mshr_entries);
 }
 
 void to_json(nlohmann::json& j, const CoherenceConfig& v) {
