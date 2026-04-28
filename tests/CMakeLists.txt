@@ -72,3 +72,37 @@ target_compile_definitions(test_cache
 )
 
 catch_discover_tests(test_cache)
+
+add_executable(test_predictor
+    predictor/test_predictors.cpp
+    predictor/test_proj2_regression.cpp
+)
+
+target_link_libraries(test_predictor
+    PRIVATE
+        casim_predictor
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+target_compile_definitions(test_predictor
+    PRIVATE
+        PROJ2_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/predictor/fixtures/proj2"
+)
+
+catch_discover_tests(test_predictor)
+
+add_executable(test_proj2_to_champsim
+    tools/test_proj2_to_champsim.cpp
+)
+
+target_link_libraries(test_proj2_to_champsim
+    PRIVATE
+        casim_proj2_to_champsim
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_proj2_to_champsim)

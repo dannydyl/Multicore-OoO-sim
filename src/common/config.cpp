@@ -46,12 +46,32 @@ void to_json(nlohmann::json& j, const PredictorConfig& v) {
         {"type", v.type},
         {"history_bits", v.history_bits},
         {"pattern_bits", v.pattern_bits},
+        {"perceptron_history_bits", v.perceptron_history_bits},
+        {"perceptron_index_bits",   v.perceptron_index_bits},
+        {"hybrid_init",             v.hybrid_init},
+        {"tournament_index_bits",   v.tournament_index_bits},
+        {"tournament_counter_bits", v.tournament_counter_bits},
     };
 }
 void from_json(const nlohmann::json& j, PredictorConfig& v) {
     j.at("type").get_to(v.type);
     j.at("history_bits").get_to(v.history_bits);
     j.at("pattern_bits").get_to(v.pattern_bits);
+    if (j.contains("perceptron_history_bits")) {
+        j.at("perceptron_history_bits").get_to(v.perceptron_history_bits);
+    }
+    if (j.contains("perceptron_index_bits")) {
+        j.at("perceptron_index_bits").get_to(v.perceptron_index_bits);
+    }
+    if (j.contains("hybrid_init")) {
+        j.at("hybrid_init").get_to(v.hybrid_init);
+    }
+    if (j.contains("tournament_index_bits")) {
+        j.at("tournament_index_bits").get_to(v.tournament_index_bits);
+    }
+    if (j.contains("tournament_counter_bits")) {
+        j.at("tournament_counter_bits").get_to(v.tournament_counter_bits);
+    }
 }
 
 void to_json(nlohmann::json& j, const CoreConfig& v) {
@@ -121,6 +141,7 @@ void to_json(nlohmann::json& j, const SimConfig& v) {
         {"core", v.core},
         {"l1", v.l1},
         {"l2", v.l2},
+        {"predictor", v.predictor},
         {"coherence", v.coherence},
     };
 }
@@ -131,6 +152,9 @@ void from_json(const nlohmann::json& j, SimConfig& v) {
     j.at("core").get_to(v.core);
     j.at("l1").get_to(v.l1);
     j.at("l2").get_to(v.l2);
+    if (j.contains("predictor")) {
+        j.at("predictor").get_to(v.predictor);
+    }
     j.at("coherence").get_to(v.coherence);
 }
 

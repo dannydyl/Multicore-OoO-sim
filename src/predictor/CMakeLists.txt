@@ -1,5 +1,10 @@
 add_library(casim_predictor STATIC
-    dummy.cpp
+    always_taken.cpp
+    factory.cpp
+    hybrid.cpp
+    perceptron.cpp
+    predictor_mode.cpp
+    yeh_patt.cpp
 )
 
 target_include_directories(casim_predictor
@@ -7,5 +12,6 @@ target_include_directories(casim_predictor
 )
 
 target_link_libraries(casim_predictor
+    PUBLIC  casim_common
     PRIVATE casim_warnings casim_options
 )

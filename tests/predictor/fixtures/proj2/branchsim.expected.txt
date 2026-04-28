@@ -1,0 +1,11 @@
+# Cross-validation reference: counts captured from running project2's
+# proj2sim -x (branchsim-only mode) on branchsim.trace (the project2 text
+# original from which branchsim.champsimtrace was converted) with default
+# predictor parameters: H=10 P=5 G=9 N=7 T=2.
+#
+# Format: one record per predictor, "<name> <correct> <mispredicted>".
+# Total branches in the trace: 4000.
+always_taken  2300  1700
+yeh_patt      3784  216
+perceptron    3587  413
+hybrid        3782  218

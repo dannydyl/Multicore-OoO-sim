@@ -27,8 +27,13 @@ struct MemoryConfig {
 
 struct PredictorConfig {
     std::string type = "yeh_patt";
-    int history_bits = 10;
-    int pattern_bits = 5;
+    int history_bits = 10;             // Yeh-Patt H
+    int pattern_bits = 5;              // Yeh-Patt P
+    int perceptron_history_bits = 9;   // Perceptron G (global history register width)
+    int perceptron_index_bits   = 7;   // Perceptron N (perceptron table = 2^N)
+    int hybrid_init             = 2;   // Tournament initial state, encoded 0..3 (see hybrid.cpp)
+    int tournament_index_bits   = 12;  // Hybrid selector table size = 1 << this
+    int tournament_counter_bits = 4;   // Hybrid selector counter width
 };
 
 struct CoreConfig {
@@ -66,6 +71,10 @@ struct SimConfig {
     CoreConfig core{};
     CacheLevelConfig l1{};
     CacheLevelConfig l2{};
+    // Top-level predictor block read by --mode predictor. Mirrors the
+    // top-level l1/l2 blocks. core.predictor remains the per-core slot
+    // used by Phase 4's OoO core.
+    PredictorConfig predictor{};
     CoherenceConfig coherence{};
 };
 

@@ -43,6 +43,16 @@
     "hit_latency": 10,
     "n_markov_rows": 64
   },
+  "predictor": {
+    "type": "yeh_patt",
+    "history_bits": 10,
+    "pattern_bits": 5,
+    "perceptron_history_bits": 9,
+    "perceptron_index_bits": 7,
+    "hybrid_init": 2,
+    "tournament_index_bits": 12,
+    "tournament_counter_bits": 4
+  },
   "coherence": {
     "protocol": "mesi"
   }
