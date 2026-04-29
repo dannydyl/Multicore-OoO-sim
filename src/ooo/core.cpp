@@ -256,7 +256,8 @@ void OooCore::stage_schedule() {
     //   - A store may fire only if no older LOAD or STORE is in the
     //     schedQ.
     // Plus: at most one store fires per cycle (project2 line 623).
-    bool store_fired = false;
+    bool store_fired   = false;
+    bool mshr_stalled  = false;     // set when an issue() failed this cycle
     const std::size_t lsu_avail = free_lsu_count(lsu_);
     for (std::size_t i = 0; i < lsu_avail; ++i) {
         SchedEntry* oldest = nullptr;
@@ -288,6 +289,17 @@ void OooCore::stage_schedule() {
         if (!oldest) break;
         if (oldest->inst.opcode == Opcode::Store && store_fired) break;
 
+        // Pre-flight check for loads: if the MSHR is full, stall this and
+        // every later iteration this cycle. Without this, the previous
+        // structure would re-find the same `oldest` (we never set its busy
+        // flag), retry against the still-full MSHR, and burn lsu_avail
+        // wasted issue() attempts per cycle. Worse, an MSHR with a
+        // merge-eligible block could nondeterministically succeed mid-loop.
+        if (oldest->inst.opcode == Opcode::Load && l1d_->mshr().full()) {
+            mshr_stalled = true;
+            break;
+        }
+
         for (auto& u : lsu_) {
             if (u.busy) continue;
             u.busy      = true;
@@ -304,11 +316,15 @@ void OooCore::stage_schedule() {
                 req.pc   = oldest->inst.pc;
                 auto id = l1d_->issue(req);
                 if (!id) {
-                    // MSHR full: stall this cycle. Project2 has no MSHR
-                    // pressure model so we degrade gracefully — undo the
-                    // FU allocation and try again next cycle.
-                    u.busy = false;
+                    // Full() check above should make this unreachable, but
+                    // keep the defensive undo + outer-loop break in case
+                    // a future cache subclass returns nullopt for some
+                    // other reason. Reset is_load too so a stale flag
+                    // can't confuse a future read of this FU's state.
+                    u.busy      = false;
+                    u.is_load   = false;
                     u.sched_ptr = nullptr;
+                    mshr_stalled = true;
                     break;
                 }
                 u.mshr_id = *id;
@@ -327,6 +343,8 @@ void OooCore::stage_schedule() {
             ++num_fires;
             break;
         }
+
+        if (mshr_stalled) break;
     }
 
     if (num_fires == 0) ++stats_.no_fire_cycles;

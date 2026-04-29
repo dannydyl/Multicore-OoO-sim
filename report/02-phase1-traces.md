@@ -66,7 +66,10 @@ There are two record-shape variants in the wild:
 - `cloudsuite_instr` — N=4, M=4, K=1, L=2. ~56 bytes per record. Used
   by IPC-1 server traces.
 
-Our reader/writer support both behind a config flag — see
+The current reader/writer implements only `input_instr` (Standard); the
+`Variant` enum is wired but `Cloudsuite` isn't reachable yet. We also
+only handle uncompressed `.champsimtrace` streams — transparent `.xz`
+decompression is documented as a future addition. See
 [include/comparch/trace.hpp](../include/comparch/trace.hpp) for the
 field constants and [src/common/trace.cpp](../src/common/trace.cpp) for
 the I/O.
@@ -152,8 +155,9 @@ drrun -t drcachesim -offline -- ./my_program args
 #    (tools/tracer/drmem2champsim, planned).
 tools/tracer/drmem2champsim out.champsimtrace drmemtrace.*.zip
 
-# 3. Simulate.
-sim --config configs/baseline.json --trace out.champsimtrace.xz
+# 3. Simulate. (Today the reader only consumes uncompressed
+#    .champsimtrace; .xz support is a future addition.)
+sim --config configs/baseline.json --trace out.champsimtrace
 ```
 
 For multi-core / coherence workloads we'd trace pthreads programs (a

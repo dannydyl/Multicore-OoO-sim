@@ -59,6 +59,16 @@ PredictorConfig always_taken_cfg() {
     return p;
 }
 
+PredictorConfig hybrid_cfg() {
+    PredictorConfig p;
+    p.type = "hybrid";
+    // Default knobs from PredictorConfig are project2's H=10 P=5 G=9 N=7,
+    // tournament_index_bits=12, tournament_counter_bits=2, hybrid_init=2
+    // (weakly perceptron). Suitable for any test that just needs the
+    // hybrid to run without asserting the bookkeeping invariant.
+    return p;
+}
+
 // Helpers to synthesize ChampSim records.
 Record alu_record(std::uint64_t pc, std::uint8_t dest = 0,
                   std::uint8_t src1 = 0, std::uint8_t src2 = 0) {
@@ -256,4 +266,92 @@ TEST_CASE("Branch with always_taken records mispredict on not-taken",
     REQUIRE(core.stats().num_branch_instructions == 1);
     REQUIRE(core.stats().branch_mispredictions   == 1);
     REQUIRE(core.stats().instructions_retired    == 1);
+}
+
+TEST_CASE("Hybrid predictor handles many branches in flight simultaneously",
+          "[ooo][branch][hybrid][regression]") {
+    // Regression for the predict()-twice-without-update assertion bug:
+    // the OoO core fetches up to fetch_width branches per cycle, all
+    // before any of them retire. The old hybrid kept single-slot
+    // last_yp_/last_pct_/pending_update_ and would either assert (debug)
+    // or train the tournament selector against the wrong outcome
+    // (release). The fix moved this state into a per-inst_num map.
+    //
+    // Stream: alternating taken / not-taken at distinct PCs to keep the
+    // branch outcome non-trivial. Several branches will be in fetch /
+    // dispatch / sched / rob simultaneously.
+    std::vector<Record> recs;
+    constexpr int kN = 200;
+    for (int i = 0; i < kN; ++i) {
+        recs.push_back(branch_record(0x6000 + 4ULL * static_cast<unsigned>(i),
+                                     /*taken=*/(i % 2) == 0));
+    }
+    auto stream = records_to_stream(recs);
+    Reader reader(*stream, Variant::Standard);
+
+    MainMemory mem({100});
+    Cache l2(small_l1d(), "L2");
+    Cache l1d(small_l1d(), "L1d");
+    auto pred = comparch::predictor::make(hybrid_cfg());
+
+    OooCore core(narrow_4_4(), *pred, l1d, reader);
+    core.run(/*cycle_cap=*/20000);
+
+    REQUIRE(core.eof());
+    REQUIRE(core.stats().num_branch_instructions == static_cast<std::uint64_t>(kN));
+    REQUIRE(core.stats().instructions_retired   == static_cast<std::uint64_t>(kN));
+    // We don't pin a specific mispredict count — both sub-predictors are
+    // training in parallel, and the alternating pattern is deliberately
+    // hard. The point is that the run completed without tripping the
+    // bookkeeping assert and produced a sane retire count.
+}
+
+TEST_CASE("OoO LSU stalls cleanly when MSHR fills",
+          "[ooo][lsu][mshr][regression]") {
+    // Regression for the LSU busy-loop bug: previously, when issue()
+    // returned nullopt the inner FU loop reset u.busy/u.sched_ptr but
+    // never set oldest->busy, so the outer lsu_avail loop re-found the
+    // same load and retried against the still-full MSHR — burning up to
+    // lsu_avail wasted attempts per cycle. Worse, an MSHR with a
+    // merge-eligible block could nondeterministically succeed mid-loop.
+    //
+    // Build a long stream of independent loads to distinct blocks (no
+    // load-load merges possible) with a tiny MSHR. The cache *must*
+    // saturate, the simulator *must* still make progress, and the retire
+    // count *must* match the trace.
+    std::vector<Record> recs;
+    constexpr int kN = 64;
+    for (int i = 0; i < kN; ++i) {
+        // Stride by a full cache block so each load is to a distinct
+        // block_addr; no merging.
+        recs.push_back(load_record(0x7000 + 4ULL * static_cast<unsigned>(i),
+                                   /*addr=*/0x10'0000ULL +
+                                            static_cast<std::uint64_t>(i) * 64ULL,
+                                   /*dest=*/static_cast<std::uint8_t>(1 + (i % 31)),
+                                   /*src1=*/0));
+    }
+    auto stream = records_to_stream(recs);
+    Reader reader(*stream, Variant::Standard);
+
+    auto cc1 = small_l1d();
+    cc1.mshr_entries = 2;        // tiny MSHR forces sustained stalls
+    cc1.hit_latency  = 50;       // long enough to keep the table busy
+    auto cc2 = small_l1d();
+    auto memcfg = comparch::cache::MainMemory::Config{200};
+
+    MainMemory mem(memcfg);
+    Cache l2(std::move(cc2), "L2");
+    auto cc1_owned = std::move(cc1);
+    cc1_owned.next_level = &l2;
+    Cache l1d(std::move(cc1_owned), "L1d");
+
+    auto pred = comparch::predictor::make(always_taken_cfg());
+    OooCore core(narrow_4_4(), *pred, l1d, reader);
+    core.run(/*cycle_cap=*/200000);
+
+    REQUIRE(core.eof());
+    REQUIRE(core.stats().instructions_retired == static_cast<std::uint64_t>(kN));
+    // Loads serialized through a 2-entry MSHR with hit_latency=50 must be
+    // far below fetch-width IPC. Sanity bound, not a hand-tuned number.
+    REQUIRE(core.stats().ipc() < 1.0);
 }

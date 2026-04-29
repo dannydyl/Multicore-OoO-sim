@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <stdexcept>
+
 #include "comparch/cache/cache.hpp"
 
 using comparch::cache::Cache;
@@ -201,6 +203,42 @@ TEST_CASE("Cache::issue returns nullopt when MSHR is full",
     l1.complete(*a);
     auto d = l1.issue({0x3000, Op::Read});
     REQUIRE(d.has_value());
+}
+
+TEST_CASE("Cache::issue does not mutate cache state when MSHR is full",
+          "[cache][mshr][stall]") {
+    // Regression for the side-effect-leak bug: previously issue() called
+    // access() before checking MSHR capacity, so a request that ultimately
+    // returned nullopt had still shifted LRU, fired prefetchers, and bumped
+    // hit/miss stats. Now the capacity check runs first.
+    auto cc = small_l1();
+    cc.hit_latency  = 100;
+    cc.mshr_entries = 1;
+    Cache l1(std::move(cc), "L1");
+
+    auto a = l1.issue({0x1000, Op::Read});       // fills the only slot
+    REQUIRE(a.has_value());
+    REQUIRE(l1.mshr().full());
+
+    const auto stats_before = l1.stats();
+
+    auto b = l1.issue({0x2000, Op::Read});       // must stall
+    REQUIRE_FALSE(b.has_value());
+
+    // No new access registered, no LRU mutation, block 0x2000 not resident.
+    REQUIRE(l1.stats().accesses == stats_before.accesses);
+    REQUIRE(l1.stats().misses   == stats_before.misses);
+    REQUIRE_FALSE(l1.block_in(0x2000));
+}
+
+TEST_CASE("Cache::issue rejects Write requests",
+          "[cache][mshr][precondition]") {
+    // Writes must use access() directly. issue()'s merge fast-path inherits
+    // the primary's AccessResult and skips the dirty-bit mutation, so a
+    // merged-Write secondary would silently lose semantics. Make the
+    // precondition explicit and loud.
+    Cache l1(small_l1(), "L1");
+    REQUIRE_THROWS_AS(l1.issue({0x1000, Op::Write}), std::invalid_argument);
 }
 
 TEST_CASE("Cache::access yields the same hit/miss as Cache::issue + peek",

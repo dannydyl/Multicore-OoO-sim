@@ -29,15 +29,21 @@
 // 0, 7, 8, 15 — the project2 numbers verbatim.
 //
 // Ported from project2_v2.1.0_all/branchsim.cpp:372-515. The TNMT_fifo is
-// dropped; we just remember the two component predictions in a small struct
-// between predict() and update() because the call sequence is one transaction
-// per branch.
+// dropped, but the *bookkeeping* problem it solved isn't — Hybrid still
+// needs to remember each branch's two sub-predictions until update() so the
+// tournament selector can be trained on the correct outcome. We keep a
+// small `pending_` map keyed by `Branch::inst_num`, indexed at predict()
+// and consumed at update(). One entry per in-flight branch lets multiple
+// predictions overlap without clobbering each other (the original FIFO's
+// purpose), which the OoO core requires once branches start being fetched
+// faster than they retire.
 
 #include "comparch/predictor/predictor.hpp"
 #include "comparch/predictor/saturating_counter.hpp"
 
 #include <cassert>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 namespace comparch::predictor {
@@ -61,16 +67,13 @@ unsigned init_value_for(int hybrid_init, int counter_bits) {
     }
 }
 
-// Contract: callers MUST call predict() exactly once before each update()
-// for the same branch. Hybrid caches each sub-predictor's prediction in
-// member variables so update() can decide whether to move the tournament
-// counter and how to train each sub-predictor; calling predict() twice in
-// a row would overwrite the cached state for the unfinished branch and
-// silently train the tournament selector against the wrong outcomes.
-//
-// In debug builds we toggle `pending_update_` on each call and assert it
-// flips correctly, so misuse trips immediately. In release builds the
-// assertion vanishes and the contract is the caller's responsibility.
+// Contract: each predict(b) must be paired with an update(b, ...) using the
+// same `b.inst_num`. Multiple predicts may be outstanding simultaneously
+// (e.g. the OoO core fetches several branches before the first one
+// retires); each branch's sub-predictions are stashed in `pending_` keyed
+// by inst_num and consumed when its update() arrives. A debug-only assert
+// catches the easy misuses (double-predict for same inst_num, update
+// without a matching predict).
 class Hybrid final : public BranchPredictor {
 public:
     Hybrid(const PredictorConfig& cfg)
@@ -83,34 +86,41 @@ public:
                                                        cfg.tournament_counter_bits))) {}
 
     bool predict(const Branch& b) override {
-        assert(!pending_update_ &&
-               "Hybrid::predict called twice without an intervening update()");
-        pending_update_ = true;
-
-        const std::uint64_t idx = (b.ip >> 2) & tnmt_mask_;
-        // The MSB of the selector counter picks which sub-predictor to trust
-        // for this branch. Low bits encode confidence in that choice.
-        const bool use_perceptron = tnmt_table_[idx].is_taken();
-
         // Always run BOTH sub-predictors so they keep training on every
         // branch — otherwise the unselected one would never see new history
         // and stop being a useful comparison.
-        last_yp_  = yp_->predict(b);
-        last_pct_ = pct_->predict(b);
-        return use_perceptron ? last_pct_ : last_yp_;
+        const bool yp  = yp_->predict(b);
+        const bool pct = pct_->predict(b);
+
+        // The MSB of the selector counter picks which sub-predictor to trust
+        // for this branch. Low bits encode confidence in that choice.
+        const std::uint64_t idx = (b.ip >> 2) & tnmt_mask_;
+        const bool use_perceptron = tnmt_table_[idx].is_taken();
+
+        // Stash this branch's sub-predictions so update() — possibly several
+        // predicts later — can train the selector with the right values.
+        // emplace returns (it, inserted); inserted==false means a predict()
+        // for this inst_num was already in flight, which is a caller bug.
+        auto [it, inserted] = pending_.emplace(b.inst_num, Pending{yp, pct});
+        (void)it;
+        assert(inserted && "Hybrid::predict: duplicate inst_num in flight");
+
+        return use_perceptron ? pct : yp;
     }
 
     void update(const Branch& b, bool /*prediction*/) override {
-        assert(pending_update_ &&
+        auto it = pending_.find(b.inst_num);
+        assert(it != pending_.end() &&
                "Hybrid::update called without a matching predict()");
-        pending_update_ = false;
+        const Pending p = it->second;
+        pending_.erase(it);
 
         const std::uint64_t idx = (b.ip >> 2) & tnmt_mask_;
 
         // Selector training: only when the two predictors disagreed do we
         // have meaningful signal about which one was right on this branch.
-        if (last_yp_ != last_pct_) {
-            if (last_yp_ == b.taken) {
+        if (p.yp != p.pct) {
+            if (p.yp == b.taken) {
                 // Yeh-Patt was right; nudge toward YP (decrement).
                 tnmt_table_[idx].update(false);
             } else {
@@ -121,8 +131,8 @@ public:
 
         // Train both sub-predictors on the actual outcome regardless of which
         // was selected — they each maintain independent state.
-        yp_->update(b, last_yp_);
-        pct_->update(b, last_pct_);
+        yp_->update(b, p.yp);
+        pct_->update(b, p.pct);
     }
 
     std::string_view name() const override { return "hybrid"; }
@@ -133,15 +143,12 @@ private:
     std::uint64_t tnmt_mask_;
     std::vector<SaturatingCounter> tnmt_table_;
 
-    // Last predictions emitted by each sub-predictor for the current branch.
-    // Cached from predict() so update() can decide whether to move the
-    // tournament counter and how to train each sub-predictor.
-    bool last_yp_  = false;
-    bool last_pct_ = false;
-
-    // Debug-only contract guard: true between predict() and update(), false
-    // otherwise. See class-level comment for the misuse it catches.
-    bool pending_update_ = false;
+    // Per-in-flight-branch snapshot: which sub-prediction each engine
+    // emitted at predict() time. update() consumes and erases its entry.
+    // Sized at most by the number of branches simultaneously in the OoO
+    // pipeline (rob_entries upper bound).
+    struct Pending { bool yp; bool pct; };
+    std::unordered_map<std::uint64_t, Pending> pending_;
 };
 
 [[nodiscard]] bool in_range(int x, int lo, int hi) { return x >= lo && x <= hi; }

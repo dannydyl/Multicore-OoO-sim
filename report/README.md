@@ -36,12 +36,19 @@ Then the phase reports, in order:
    two-level adaptive, Perceptron, Hybrid tournament. Pinned
    bit-for-bit against project2's `proj2sim` binary.
 
-And the standalone:
+And the standalone reviews:
 
 7. **[code-review.md](code-review.md)** — senior-level code review
    over Phases 0-3. Bugs (none found that affect output), logic /
    model-fidelity issues (some), and Phase 4 architectural debts
    (two important ones).
+8. **[06-phase4-review.md](06-phase4-review.md)** — second review pass
+   covering Phase 4A (cache MSHR) and Phase 4B (OoO core). Four
+   bug-class findings that all live in the seam between subsystems —
+   hybrid predictor under multi-branch-in-flight, `Cache::issue()`
+   side-effect leak on MSHR-full, OoO LSU busy-loop on the same stall,
+   and `--mode coherence` silent exit. All fixed in the same pass with
+   tests pinning each regression.
 
 ## Status snapshot
 
@@ -51,11 +58,11 @@ And the standalone:
 | 1     | Trace format & tracer                  | partial     | 5             |
 | 2     | Cache (`--mode cache`)                 | ✅ done     | 41 (incl. 4 proj1 regressions) |
 | 3     | Branch predictor (`--mode predictor`)  | ✅ done     | 11 (incl. 1 proj2 regression with 4 sections) |
-| 4     | OoO core (`--mode ooo`)                | not started | —             |
+| 4     | OoO core (`--mode ooo`)                | ✅ done     | 8 (basic) + 4 from cache/predictor regressions covering Phase-4 fixes |
 | 5     | Multi-core + coherence                 | not started | —             |
 | 6     | Polish & public release                | not started | —             |
 
-Total tests: **62 / 62 passing** (April 2026).
+Total tests: **86 / 86 passing**.
 
 ## Build / run cheat sheet
 

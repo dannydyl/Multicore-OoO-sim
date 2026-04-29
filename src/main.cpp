@@ -65,24 +65,22 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (cli.trace) {
-        LOG_INFO("trace path: " << *cli.trace);
-    }
-
-    const std::string dumped = comparch::dump_config(cfg);
-
+    // Coherence and Full modes are accepted by the CLI but have no driver
+    // yet (Phase 5). Returning 0 here would silently lie to scripts that
+    // treat exit code as truth — fail loudly instead, but still emit the
+    // merged config to --out for users who pass --mode full just to render
+    // the resolved config.
     if (cli.out) {
         std::ofstream out(*cli.out);
         if (!out) {
             LOG_ERROR("cannot open --out file for writing: " << *cli.out);
             return 3;
         }
-        out << dumped << '\n';
+        out << comparch::dump_config(cfg) << '\n';
         LOG_INFO("wrote merged config to " << *cli.out);
-    } else {
-        std::cout << dumped << '\n';
     }
 
-    LOG_INFO(comparch::to_string(cli.mode) << ": no driver yet; exiting");
-    return 0;
+    LOG_ERROR(comparch::to_string(cli.mode)
+              << ": driver not implemented yet (Phase 5)");
+    return 5;
 }

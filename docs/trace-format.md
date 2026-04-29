@@ -29,7 +29,10 @@ end of trace.
 
 ## Record variants
 
-Two record shapes exist in the wild. We support both behind a config flag.
+Two record shapes exist in the wild. The simulator currently implements
+only `input_instr` (Standard); `cloudsuite_instr` is specced here for
+future-compatibility but not yet wired up — see the implementation-status
+note above.
 
 ### `input_instr` (standard, used by DPC-3 / CRC-2 / IPC-1)
 

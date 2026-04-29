@@ -61,7 +61,7 @@ testable thing.
 | 1     | ChampSim trace format, reader/writer, synthetic generator, tracer plan | partial  | [02-phase1-traces.md](02-phase1-traces.md)     |
 | 2     | Cache subsystem (`--mode cache`)      | ✅ done | [03-phase2-cache.md](03-phase2-cache.md)       |
 | 3     | Branch predictors (`--mode predictor`)| ✅ done | [04-phase3-predictor.md](04-phase3-predictor.md) |
-| 4     | OoO core (`--mode ooo`, single-core full) | pending | —                                                |
+| 4     | OoO core (`--mode ooo`, single-core full) | ✅ done | [06-phase4-review.md](06-phase4-review.md) (review + applied fixes) |
 | 5     | Multi-core + coherence (`--mode full` / `coherence`) | pending | —                                     |
 | 6     | Polish, results plots, public release | pending  | —                                                |
 
@@ -91,10 +91,11 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-62 tests, all green. Cache numbers match project1 reference output
+86 tests, all green. Cache numbers match project1 reference output
 bit-for-bit; predictor numbers match project2 reference output
 bit-for-bit (see Phase 2 / Phase 3 reports for the regression
-methodology).
+methodology). Phase-4 fixes are pinned by their own targeted tests
+([06-phase4-review.md](06-phase4-review.md)).
 
 ## How to read the rest of this report
 

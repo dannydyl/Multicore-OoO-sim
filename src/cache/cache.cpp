@@ -404,12 +404,25 @@ AccessResult Cache::access(const MemReq& req) {
 // the MSHR slot just holds the result until `now_` reaches `due_cycle`.
 // ---------------------------------------------------------------------------
 std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
+    // Precondition: writes go through synchronous access(). issue() is the
+    // non-blocking path for loads (and prefetches via issue_prefetch). A
+    // Write secondary that merged onto a Read primary would inherit the
+    // primary's already-computed AccessResult and skip the dirty-bit
+    // mutation that access() would normally apply — silently corrupting
+    // dirty/writeback accounting. Make the precondition explicit rather
+    // than carry latent semantic loss.
+    if (req.op == Op::Write) {
+        throw std::invalid_argument(
+            "Cache::issue: Write requests must use access() directly "
+            "(issue() merge fast-path cannot propagate dirty-bit semantics)");
+    }
+
     const std::uint64_t block_addr = get_block_addr(req.addr);
 
-    // If a slot already targets this block, the miss-merge fast-path lets
-    // us skip the access() call entirely — secondaries inherit the
-    // primary's timing. This keeps stats correct: a merged secondary is
-    // not a separate miss.
+    // Miss-merge fast-path: if a slot already targets this block, the new
+    // request piggybacks. We skip the access() call entirely so that a
+    // merged secondary is not double-counted as a separate miss and
+    // inherits the primary's due_cycle.
     for (const auto& e : mshr_.entries()) {
         if (e.valid && e.block_addr == block_addr) {
             const std::uint64_t id = next_id_++;
@@ -419,20 +432,23 @@ std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
         }
     }
 
-    // No merge candidate: drive the access through the cache hierarchy
-    // synchronously so we know the round-trip latency. This also performs
-    // all the state mutations (LRU updates, prefetcher fires, eviction
-    // writebacks) the OoO core relies on.
-    const AccessResult result = access(req);
-    const std::uint64_t due_cycle = now_ + result.latency;
-
-    const std::uint64_t id = next_id_++;
-    if (mshr_.allocate(id, block_addr, req.op, req.pc,
-                       due_cycle, result) == nullptr) {
-        // Table full: undo the id allocation and let the caller stall.
-        --next_id_;
+    // No merge candidate: we will need a fresh slot. Check capacity FIRST,
+    // before access() — access() mutates LRU, may fire prefetchers, and can
+    // chain an eviction writeback to the next level. If we found out only
+    // afterwards that the MSHR was full and returned nullopt, all of those
+    // side effects would still have happened, leaving the cache in a state
+    // inconsistent with the caller's "request was rejected" understanding.
+    if (mshr_.full()) {
         return std::nullopt;
     }
+
+    const AccessResult result = access(req);
+    const std::uint64_t due_cycle = now_ + result.latency;
+    const std::uint64_t id = next_id_++;
+
+    // We pre-checked capacity, so allocate cannot return nullptr here. The
+    // (void) cast documents the intentional ignore.
+    (void)mshr_.allocate(id, block_addr, req.op, req.pc, due_cycle, result);
     return id;
 }
 
