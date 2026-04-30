@@ -44,12 +44,9 @@ void print_completion(std::ostream& os, bool completed,
     if (completed) os << "Simulation complete\n";
     else           os << "Simulation terminated\n";
     os << "Cycles: " << stats.cycles << '\n';
-    // Reuse the rest of the project3-compatible counter block.
-    CoherenceStats body = stats;
-    body.cycles = 0;          // print_stats prints its own Cycles header.
-    // We can't actually reuse print_stats because it prints "Simulation
-    // complete\n" and "Cycles:" itself — emit the seven counter lines
-    // directly here, mirroring print_stats's setw layout.
+    // We don't reuse print_stats() here because it prints
+    // "Simulation complete\n" + "Cycles:" itself — emit the seven
+    // counter lines directly, mirroring print_stats's setw layout.
     auto line = [&](const char* label, std::uint64_t v, const char* suf) {
         os << label;
         os.width(8); os << v; os << ' ' << suf << '\n';
