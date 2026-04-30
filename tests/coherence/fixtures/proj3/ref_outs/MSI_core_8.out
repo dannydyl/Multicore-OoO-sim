@@ -1,0 +1,18 @@
+Selected Configuration:
+	Protocol: MSI_PRO
+	Trace Directory: traces/core_8
+	Num Procs: 8
+	CPU TYPE: FICI_CPU
+	Network Topology: RING_TOP
+	Link Width: 8 bytes
+	Memory Latency: 100
+	Block Size: 6
+Starting simulation
+Simulation complete
+Cycles: 208830
+Cache Misses:         2431 misses
+Cache Accesses:       3148 accesses
+Silent Upgrades:         0 upgrades
+$-to-$ Transfers:      423 transfers
+Memory Reads:         2026 reads
+Memory Writes:         404 writes

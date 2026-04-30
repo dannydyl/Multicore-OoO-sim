@@ -9,6 +9,7 @@ target_link_libraries(sim
         casim_predictor
         casim_ooo
         casim_coherence
+        casim_full
         casim_core
         casim_warnings
         casim_options

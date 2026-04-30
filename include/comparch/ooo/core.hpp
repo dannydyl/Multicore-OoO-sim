@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <list>
+#include <tuple>
 #include <vector>
 
 #include "comparch/cache/cache.hpp"
@@ -45,6 +46,11 @@ struct OooConfig {
     std::size_t lsu_fus                 = 2;
     // mul_stages, alu_stages, lsu_stages are fixed at 3 / 1 / 1 to match
     // project2's pinned constants. We don't expose them as knobs yet.
+
+    // Watchdog: abort tick() if pipeline progress (retired / fetched /
+    // rob+sq+dispq sizes) is unchanged for this many consecutive cycles.
+    // 0 disables the watchdog.
+    std::uint64_t deadlock_threshold_cycles = 100000;
 };
 
 struct OooStats {
@@ -61,6 +67,8 @@ struct OooStats {
     double        dispq_avg_sum           = 0.0;
     double        schedq_avg_sum          = 0.0;
     double        rob_avg_sum             = 0.0;
+    bool          deadlocked              = false;
+    std::uint64_t stall_cycles_at_abort   = 0;
 
     double ipc()        const { return cycles ? static_cast<double>(instructions_retired) / static_cast<double>(cycles) : 0.0; }
     double dispq_avg()  const { return cycles ? dispq_avg_sum  / static_cast<double>(cycles) : 0.0; }
@@ -128,6 +136,16 @@ private:
     bool          eof_         = false;   // trace exhausted
     bool          in_mispred_  = false;   // mispred fetched, awaiting retire
     std::uint64_t dyn_count_   = 0;       // monotonic instruction sequence number
+
+    // Deadlock watchdog. last_progress_sig_ snapshots the per-cycle
+    // progress vector (retired, fetched, rob_size, sq_size, dispq_size);
+    // if it stays equal for cfg_.deadlock_threshold_cycles cycles in a
+    // row, tick() aborts and sets stats_.deadlocked.
+    using ProgressSig = std::tuple<std::uint64_t, std::uint64_t,
+                                   std::size_t, std::size_t, std::size_t>;
+    ProgressSig   last_progress_sig_{};
+    bool          last_progress_sig_valid_ = false;
+    std::uint64_t stall_cycles_            = 0;
 
     OooStats stats_;
 };

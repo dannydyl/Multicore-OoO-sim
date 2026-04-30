@@ -165,12 +165,20 @@ void Cache::insert_new_block(char rw,
 
         if (set.LRU_list.size() == assoc) {
             // Set is full -> evict the LRU (back of the list).
-            // If it was dirty, push the dirty data downstream (this is
-            // the "writeback" cost we want to count).
-            if (set.LRU_list.back().dirty) {
+            const auto&  victim         = set.LRU_list.back();
+            const bool   victim_dirty   = victim.dirty;
+            const auto   victim_block   = victim.block_addr;
+            const auto   victim_byte_addr = victim_block << cfg_.b;
+            if (cfg_.coherence_sink) {
+                // Coherence-managed eviction: notify the sink for both
+                // dirty (will become a WRITEBACK) and clean (INVACK)
+                // cases. Still bump `writebacks` for dirty victims so
+                // the unified-sim stats line up with non-coherent runs.
+                if (victim_dirty) ++stats_.writebacks;
+                cfg_.coherence_sink->on_evict(victim_block, victim_dirty);
+            } else if (victim_dirty) {
+                // Non-coherent path: push the dirty line downstream.
                 ++stats_.writebacks;
-                const std::uint64_t victim_byte_addr =
-                    set.LRU_list.back().block_addr << cfg_.b;
                 if (cfg_.next_level) {
                     cfg_.next_level->access(
                         MemReq{victim_byte_addr, Op::Write, /*pc=*/0});
@@ -303,6 +311,7 @@ AccessResult Cache::access(const MemReq& req) {
         }
 
         unsigned downstream_latency = 0;
+        bool     suspended          = false;
         if (HIT) {
             ++stats_.hits;
         } else {
@@ -313,24 +322,37 @@ AccessResult Cache::access(const MemReq& req) {
             // round-trip we report is realistic — pre-Phase-4 we discarded
             // it because --mode cache only counted hits/misses.
             if (cfg_.next_level) {
-                downstream_latency = cfg_.next_level->access(
-                    MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
+                const auto sub = cfg_.next_level->access(
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+                if (sub.latency == kCoherenceSuspendedLatency) {
+                    suspended = true;
+                } else {
+                    downstream_latency = sub.latency;
+                }
             } else if (cfg_.main_memory) {
                 downstream_latency = cfg_.main_memory->access(
                     MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
+            } else if (cfg_.coherence_sink) {
+                // Coherence-managed fetch: the sink will message the
+                // directory and call mark_ready when DATA arrives. Skip
+                // local block allocation — the adapter will fill via
+                // insert_new_block once the data is in.
+                cfg_.coherence_sink->on_miss(block_addr, req.op);
+                suspended = true;
             }
-            // Allocate the new block locally. May trigger a writeback if
-            // the victim was dirty.
-            insert_new_block(rw, tag, index, block_addr, /*is_prefetch=*/false);
-            // Ping the prefetcher (only configured at L2 in baseline.json).
-            if (cfg_.prefetcher) {
-                cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
+            if (!suspended) {
+                insert_new_block(rw, tag, index, block_addr,
+                                 /*is_prefetch=*/false);
+                if (cfg_.prefetcher) {
+                    cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
+                }
             }
         }
 
         AccessResult r;
         r.hit     = HIT;
-        r.latency = cfg_.hit_latency + downstream_latency;
+        r.latency = suspended ? kCoherenceSuspendedLatency
+                              : (cfg_.hit_latency + downstream_latency);
         return r;
     }
 
@@ -371,6 +393,7 @@ AccessResult Cache::access(const MemReq& req) {
     }
 
     unsigned downstream_latency = 0;
+    bool     suspended          = false;
     if (HIT) {
         ++stats_.read_hits;
     } else {
@@ -378,22 +401,30 @@ AccessResult Cache::access(const MemReq& req) {
         // L2 read miss -> allocate locally + fetch from main memory.
         // Order matters for stat fidelity: insert first, then propagate
         // the read to memory, then run the prefetcher (matches project1).
-        insert_new_block('R', tag, index, block_addr, /*is_prefetch=*/false);
         if (cfg_.next_level) {
-            downstream_latency = cfg_.next_level->access(
-                MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
+            const auto sub = cfg_.next_level->access(
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+            if (sub.latency == kCoherenceSuspendedLatency) suspended = true;
+            else downstream_latency = sub.latency;
         } else if (cfg_.main_memory) {
             downstream_latency = cfg_.main_memory->access(
                 MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
+        } else if (cfg_.coherence_sink) {
+            cfg_.coherence_sink->on_miss(block_addr, req.op);
+            suspended = true;
         }
-        if (cfg_.prefetcher) {
-            cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
+        if (!suspended) {
+            insert_new_block('R', tag, index, block_addr, /*is_prefetch=*/false);
+            if (cfg_.prefetcher) {
+                cfg_.prefetcher->on_miss(*this, cfg_.peer_above, req);
+            }
         }
     }
 
     AccessResult r;
     r.hit     = HIT;
-    r.latency = cfg_.hit_latency + downstream_latency;
+    r.latency = suspended ? kCoherenceSuspendedLatency
+                          : (cfg_.hit_latency + downstream_latency);
     return r;
 }
 
@@ -404,31 +435,26 @@ AccessResult Cache::access(const MemReq& req) {
 // the MSHR slot just holds the result until `now_` reaches `due_cycle`.
 // ---------------------------------------------------------------------------
 std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
-    // Precondition: writes go through synchronous access(). issue() is the
-    // non-blocking path for loads (and prefetches via issue_prefetch). A
-    // Write secondary that merged onto a Read primary would inherit the
-    // primary's already-computed AccessResult and skip the dirty-bit
-    // mutation that access() would normally apply — silently corrupting
-    // dirty/writeback accounting. Make the precondition explicit rather
-    // than carry latent semantic loss.
-    if (req.op == Op::Write) {
-        throw std::invalid_argument(
-            "Cache::issue: Write requests must use access() directly "
-            "(issue() merge fast-path cannot propagate dirty-bit semantics)");
-    }
-
     const std::uint64_t block_addr = get_block_addr(req.addr);
 
     // Miss-merge fast-path: if a slot already targets this block, the new
     // request piggybacks. We skip the access() call entirely so that a
     // merged secondary is not double-counted as a separate miss and
     // inherits the primary's due_cycle.
-    for (const auto& e : mshr_.entries()) {
-        if (e.valid && e.block_addr == block_addr) {
-            const std::uint64_t id = next_id_++;
-            (void)mshr_.allocate(id, block_addr, req.op, req.pc,
-                                 e.due_cycle, e.result);
-            return id;
+    //
+    // Phase 5B: writes are NOT eligible to merge onto a read primary —
+    // a write piggybacking a read primary would inherit the primary's
+    // (clean) AccessResult and skip the dirty-bit mutation that
+    // access() would otherwise apply. Force writes to allocate a
+    // fresh slot (which goes through access() below).
+    if (req.op != Op::Write) {
+        for (const auto& e : mshr_.entries()) {
+            if (e.valid && e.block_addr == block_addr) {
+                const std::uint64_t id = next_id_++;
+                (void)mshr_.allocate(id, block_addr, req.op, req.pc,
+                                     e.due_cycle, e.result);
+                return id;
+            }
         }
     }
 
@@ -443,7 +469,13 @@ std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
     }
 
     const AccessResult result = access(req);
-    const std::uint64_t due_cycle = now_ + result.latency;
+    // Phase 5B: a coherence-managed miss returns latency=∞ as the
+    // sentinel for "external completion." Park the MSHR with
+    // due_cycle = UINT64_MAX so MSHR::tick never auto-flips ready;
+    // CoherenceAdapter calls Cache::mark_ready(id) from on_data_arrival.
+    const bool suspended = (result.latency == kCoherenceSuspendedLatency);
+    const std::uint64_t due_cycle =
+        suspended ? UINT64_MAX : (now_ + result.latency);
     const std::uint64_t id = next_id_++;
 
     // We pre-checked capacity, so allocate cannot return nullptr here. The
@@ -463,6 +495,28 @@ void Cache::complete(std::uint64_t id) {
 void Cache::tick() {
     ++now_;
     mshr_.tick(now_);
+}
+
+void Cache::mark_ready(std::uint64_t id) {
+    if (auto* e = mshr_.find(id)) {
+        e->ready = true;
+    }
+}
+
+void Cache::coherence_invalidate(std::uint64_t block_addr) {
+    // Walk just the set the block would land in. If resident, drop it
+    // silently (no writeback — the agent's recall path already flushed
+    // the dirty data to the directory before we got here).
+    const std::uint64_t tag   = get_tag(block_addr);
+    const std::uint64_t index = get_index(block_addr);
+    auto& set = rows[index];
+    for (auto it = set.LRU_list.begin(); it != set.LRU_list.end(); ++it) {
+        if (it->valid && it->tag == tag) {
+            set.LRU_list.erase(it);
+            ++stats_.coherence_invals;
+            return;
+        }
+    }
 }
 
 } // namespace comparch::cache

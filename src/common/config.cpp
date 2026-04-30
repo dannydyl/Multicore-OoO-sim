@@ -34,11 +34,18 @@ std::optional<Mode> parse_mode(std::string_view s) {
 // still caught.
 
 void to_json(nlohmann::json& j, const InterconnectConfig& v) {
-    j = nlohmann::json{{"topology", v.topology}, {"link_latency", v.link_latency}};
+    j = nlohmann::json{
+        {"topology",        v.topology},
+        {"link_latency",    v.link_latency},
+        {"link_width_log2", v.link_width_log2},
+        {"block_size_log2", v.block_size_log2},
+    };
 }
 void from_json(const nlohmann::json& j, InterconnectConfig& v) {
-    v.topology     = j.value("topology",     v.topology);
-    v.link_latency = j.value("link_latency", v.link_latency);
+    v.topology        = j.value("topology",        v.topology);
+    v.link_latency    = j.value("link_latency",    v.link_latency);
+    v.link_width_log2 = j.value("link_width_log2", v.link_width_log2);
+    v.block_size_log2 = j.value("block_size_log2", v.block_size_log2);
 }
 
 void to_json(nlohmann::json& j, const MemoryConfig& v) {
@@ -83,20 +90,22 @@ void to_json(nlohmann::json& j, const CoreConfig& v) {
         {"alu_stages", v.alu_stages},
         {"mul_stages", v.mul_stages},
         {"lsu_stages", v.lsu_stages},
+        {"deadlock_threshold_cycles", v.deadlock_threshold_cycles},
         {"predictor", v.predictor},
     };
 }
 void from_json(const nlohmann::json& j, CoreConfig& v) {
-    v.fetch_width           = j.value("fetch_width",           v.fetch_width);
-    v.rob_entries           = j.value("rob_entries",           v.rob_entries);
-    v.schedq_entries_per_fu = j.value("schedq_entries_per_fu", v.schedq_entries_per_fu);
-    v.alu_fus               = j.value("alu_fus",               v.alu_fus);
-    v.mul_fus               = j.value("mul_fus",               v.mul_fus);
-    v.lsu_fus               = j.value("lsu_fus",               v.lsu_fus);
-    v.alu_stages            = j.value("alu_stages",            v.alu_stages);
-    v.mul_stages            = j.value("mul_stages",            v.mul_stages);
-    v.lsu_stages            = j.value("lsu_stages",            v.lsu_stages);
-    v.predictor             = j.value("predictor",             v.predictor);
+    v.fetch_width               = j.value("fetch_width",               v.fetch_width);
+    v.rob_entries               = j.value("rob_entries",               v.rob_entries);
+    v.schedq_entries_per_fu     = j.value("schedq_entries_per_fu",     v.schedq_entries_per_fu);
+    v.alu_fus                   = j.value("alu_fus",                   v.alu_fus);
+    v.mul_fus                   = j.value("mul_fus",                   v.mul_fus);
+    v.lsu_fus                   = j.value("lsu_fus",                   v.lsu_fus);
+    v.alu_stages                = j.value("alu_stages",                v.alu_stages);
+    v.mul_stages                = j.value("mul_stages",                v.mul_stages);
+    v.lsu_stages                = j.value("lsu_stages",                v.lsu_stages);
+    v.deadlock_threshold_cycles = j.value("deadlock_threshold_cycles", v.deadlock_threshold_cycles);
+    v.predictor                 = j.value("predictor",                 v.predictor);
 }
 
 void to_json(nlohmann::json& j, const CacheLevelConfig& v) {

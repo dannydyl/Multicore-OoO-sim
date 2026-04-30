@@ -1,0 +1,18 @@
+Selected Configuration:
+	Protocol: MOSI_PRO
+	Trace Directory: traces/core_16
+	Num Procs: 16
+	CPU TYPE: FICI_CPU
+	Network Topology: RING_TOP
+	Link Width: 8 bytes
+	Memory Latency: 100
+	Block Size: 6
+Starting simulation
+Simulation complete
+Cycles: 270610
+Cache Misses:         4111 misses
+Cache Accesses:       5414 accesses
+Silent Upgrades:         0 upgrades
+$-to-$ Transfers:     2156 transfers
+Memory Reads:         2559 reads
+Memory Writes:           0 writes

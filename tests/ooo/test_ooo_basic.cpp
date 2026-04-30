@@ -306,6 +306,77 @@ TEST_CASE("Hybrid predictor handles many branches in flight simultaneously",
     // bookkeeping assert and produced a sane retire count.
 }
 
+TEST_CASE("Deadlock watchdog fires when pipeline stops making progress",
+          "[ooo][watchdog]") {
+    // A single load that misses L1 and L2 to DRAM. While the MSHR is
+    // outstanding nothing gets fetched, nothing retires, and the queue
+    // sizes don't move — that's a long stretch of constant signature.
+    // With the watchdog threshold set well below the DRAM latency the
+    // pipeline must trip before the load completes.
+    std::vector<Record> recs;
+    recs.push_back(load_record(/*pc=*/0x9000, /*addr=*/0x80,
+                               /*dest=*/2, /*src1=*/0));
+    auto stream = records_to_stream(recs);
+    Reader reader(*stream, Variant::Standard);
+
+    auto memcfg = comparch::cache::MainMemory::Config{500};   // long DRAM stall
+    MainMemory mem(memcfg);
+
+    auto cc2 = small_l1d();
+    cc2.main_memory = &mem;                       // wire L2 -> DRAM
+    Cache l2(std::move(cc2), "L2");
+
+    auto cc1 = small_l1d();
+    cc1.next_level = &l2;
+    Cache l1d(std::move(cc1), "L1d");
+    l2.set_peer_above(&l1d);
+
+    auto cfg = narrow_4_4();
+    cfg.deadlock_threshold_cycles = 30;
+
+    auto pred = comparch::predictor::make(always_taken_cfg());
+    OooCore core(cfg, *pred, l1d, reader);
+    core.run(/*cycle_cap=*/2000);
+
+    REQUIRE(core.stats().deadlocked);
+    REQUIRE(core.stats().instructions_retired == 0);
+    REQUIRE(core.stats().stall_cycles_at_abort >= 30);
+}
+
+TEST_CASE("Deadlock watchdog disabled (threshold=0) lets pipeline run",
+          "[ooo][watchdog]") {
+    // Same pathological-but-legal scenario as above, but with the
+    // watchdog disabled. The load eventually completes and retires.
+    std::vector<Record> recs;
+    recs.push_back(load_record(/*pc=*/0x9000, /*addr=*/0x80,
+                               /*dest=*/2, /*src1=*/0));
+    auto stream = records_to_stream(recs);
+    Reader reader(*stream, Variant::Standard);
+
+    auto memcfg = comparch::cache::MainMemory::Config{100};
+    MainMemory mem(memcfg);
+
+    auto cc2 = small_l1d();
+    cc2.main_memory = &mem;
+    Cache l2(std::move(cc2), "L2");
+
+    auto cc1 = small_l1d();
+    cc1.next_level = &l2;
+    Cache l1d(std::move(cc1), "L1d");
+    l2.set_peer_above(&l1d);
+
+    auto cfg = narrow_4_4();
+    cfg.deadlock_threshold_cycles = 0;            // disabled
+
+    auto pred = comparch::predictor::make(always_taken_cfg());
+    OooCore core(cfg, *pred, l1d, reader);
+    core.run(/*cycle_cap=*/2000);
+
+    REQUIRE_FALSE(core.stats().deadlocked);
+    REQUIRE(core.stats().instructions_retired == 1);
+    REQUIRE(core.eof());
+}
+
 TEST_CASE("OoO LSU stalls cleanly when MSHR fills",
           "[ooo][lsu][mshr][regression]") {
     // Regression for the LSU busy-loop bug: previously, when issue()

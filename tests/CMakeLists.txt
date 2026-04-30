@@ -49,6 +49,7 @@ catch_discover_tests(test_gen_trace)
 
 add_executable(test_cache
     cache/test_cache_basic.cpp
+    cache/test_coherence_sink.cpp
     cache/test_replacement.cpp
     cache/test_l1_l2.cpp
     cache/test_l2_wbwa.cpp
@@ -121,3 +122,47 @@ target_link_libraries(test_proj2_to_champsim
 )
 
 catch_discover_tests(test_proj2_to_champsim)
+
+add_executable(test_coherence
+    coherence/test_coherence_stats.cpp
+    coherence/test_fici_cpu.cpp
+    coherence/test_mi.cpp
+    coherence/test_network_basic.cpp
+    coherence/test_proj3_regression.cpp
+    coherence/test_writeback.cpp
+)
+
+target_link_libraries(test_coherence
+    PRIVATE
+        casim_coherence
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+target_compile_definitions(test_coherence
+    PRIVATE
+        PROJ3_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/coherence/fixtures/proj3"
+)
+
+catch_discover_tests(test_coherence)
+
+add_executable(test_full
+    full/test_cli_dispatch.cpp
+    full/test_full_mode.cpp
+)
+
+target_link_libraries(test_full
+    PRIVATE
+        casim_full
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+target_compile_definitions(test_full
+    PRIVATE
+        BASELINE_CONFIG_PATH="${CMAKE_SOURCE_DIR}/configs/baseline.json"
+)
+
+catch_discover_tests(test_full)

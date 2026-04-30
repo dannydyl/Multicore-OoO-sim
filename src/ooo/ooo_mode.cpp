@@ -7,6 +7,7 @@
 
 #include "comparch/ooo/ooo_mode.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 
@@ -57,6 +58,11 @@ void print_stats(std::ostream& os, const OooStats& s) {
        << std::fixed << std::setprecision(2) << s.schedq_avg() << '\n';
     os << "  rob max / avg          " << s.rob_max    << "  / "
        << std::fixed << std::setprecision(2) << s.rob_avg()    << '\n';
+
+    if (s.deadlocked) {
+        os << "  deadlocked             true (stalled "
+           << s.stall_cycles_at_abort << " cycles before abort)\n";
+    }
 }
 
 } // namespace
@@ -92,6 +98,8 @@ int run_ooo_mode(const SimConfig& cfg, const CliArgs& cli) {
     occ.alu_fus               = static_cast<std::size_t>(cfg.core.alu_fus);
     occ.mul_fus               = static_cast<std::size_t>(cfg.core.mul_fus);
     occ.lsu_fus               = static_cast<std::size_t>(cfg.core.lsu_fus);
+    occ.deadlock_threshold_cycles =
+        static_cast<std::uint64_t>(std::max(0, cfg.core.deadlock_threshold_cycles));
 
     LOG_INFO("ooo mode: predictor=" << pred->name()
              << " fetch=" << occ.fetch_width
@@ -105,7 +113,7 @@ int run_ooo_mode(const SimConfig& cfg, const CliArgs& cli) {
     core.run();
 
     print_stats(std::cout, core.stats());
-    return 0;
+    return core.stats().deadlocked ? 5 : 0;
 }
 
 } // namespace comparch::ooo

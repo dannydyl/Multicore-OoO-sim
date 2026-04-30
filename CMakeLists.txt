@@ -49,6 +49,7 @@ add_subdirectory(src/predictor)
 add_subdirectory(src/ooo)
 add_subdirectory(src/coherence)
 add_subdirectory(src/core)
+add_subdirectory(src/full)
 add_subdirectory(src)
 add_subdirectory(tools)
 

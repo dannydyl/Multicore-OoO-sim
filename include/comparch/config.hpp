@@ -18,6 +18,13 @@ std::optional<Mode> parse_mode(std::string_view s);
 struct InterconnectConfig {
     std::string topology = "ring";
     int link_latency = 1;
+    // Project3 inheritance: link_width_log2 = 3 (8-byte links),
+    // block_size_log2 = 6 (64-byte cache lines). Header / payload flit counts
+    // are derived at Network construction:
+    //   header_flits  = 1 << (4 - link_width_log2)
+    //   payload_flits = 1 << (block_size_log2 - link_width_log2)
+    int link_width_log2 = 3;
+    int block_size_log2 = 6;
 };
 
 struct MemoryConfig {
@@ -46,6 +53,12 @@ struct CoreConfig {
     int alu_stages = 1;
     int mul_stages = 3;
     int lsu_stages = 1;
+    // Abort the OoO loop if no pipeline progress is observed for this many
+    // consecutive cycles. 0 disables the watchdog. The default sits well
+    // above the longest legitimate stall (a chain of dependent DRAM-bound
+    // loads), so a real config should never trip it; lowering it is useful
+    // when bisecting a wedge.
+    int deadlock_threshold_cycles = 100000;
     PredictorConfig predictor{};
 };
 

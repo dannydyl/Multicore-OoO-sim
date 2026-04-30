@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "comparch/cache/cache_stats.hpp"
+#include "comparch/cache/coherence_sink.hpp"
 #include "comparch/cache/mem_req.hpp"
 #include "comparch/cache/mshr.hpp"
 #include "comparch/cache/prefetcher.hpp"
@@ -46,8 +47,13 @@ public:
         unsigned    hit_latency   = 2;
         unsigned    mshr_entries  = 8;   // size of the MSHR table; bounds in-flight misses
 
-        Cache*      next_level    = nullptr;
-        MainMemory* main_memory   = nullptr;
+        Cache*         next_level     = nullptr;
+        MainMemory*    main_memory    = nullptr;
+        // Phase 5B: when set, L1 misses and dirty evictions that would
+        // otherwise hit `next_level`/`main_memory` route through this
+        // sink instead. Used by the multi-core driver to splice each
+        // L1's leaf into the coherence subsystem.
+        CoherenceSink* coherence_sink = nullptr;
 
         // Prefetcher attached to this level. Invoked after demand misses.
         std::unique_ptr<Prefetcher> prefetcher;
@@ -85,6 +91,15 @@ public:
     void                         complete(std::uint64_t id);
     void                         tick();
 
+    // Phase 5B: coherence-driven external completion. mark_ready flips the
+    // ready bit on an MSHR slot whose due_cycle was set to UINT64_MAX
+    // (the sentinel used when a coherence_sink takes ownership of the
+    // miss path). coherence_invalidate drops the block silently if
+    // resident — used by the adapter to honor REQ_INVALID / RECALL_GOTO_I
+    // events from the directory.
+    void mark_ready(std::uint64_t id);
+    void coherence_invalidate(std::uint64_t block_addr);
+
     const CacheStats& stats() const { return stats_; }
     const std::string& name() const { return name_; }
     const Config&      cfg()  const { return cfg_; }
@@ -108,6 +123,15 @@ public:
     // Patch the upstream peer pointer post-construction (resolves the
     // L1<->L2 circular reference that prefetchers consult).
     void          set_peer_above(Cache* peer) { cfg_.peer_above = peer; }
+
+    // Wire the coherence sink post-construction. Necessary because the
+    // CoherenceAdapter needs L1+L2 references at its own construction,
+    // which can't happen before the L2 itself exists. The driver builds
+    // L2 first (no sink), then the adapter (with both caches), then
+    // calls this to splice the adapter behind L2.
+    void          set_coherence_sink(CoherenceSink* sink) {
+        cfg_.coherence_sink = sink;
+    }
 
     std::uint64_t get_tag(std::uint64_t block_addr) const;
     std::uint64_t get_index(std::uint64_t block_addr) const;

@@ -2,7 +2,9 @@
   "cores": 4,
   "interconnect": {
     "topology": "ring",
-    "link_latency": 1
+    "link_latency": 1,
+    "link_width_log2": 3,
+    "block_size_log2": 6
   },
   "memory": {
     "latency": 100,

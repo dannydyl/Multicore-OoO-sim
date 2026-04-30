@@ -11,9 +11,14 @@ namespace comparch {
 struct CliArgs {
     std::filesystem::path config_path;
     std::optional<std::filesystem::path> trace;
+    // Per-core trace directory (project3 layout: <dir>/p<i>.trace). Used by
+    // --mode coherence; mutually exclusive with --trace.
+    std::optional<std::filesystem::path> trace_dir;
     Mode mode = Mode::Full;
     std::optional<std::filesystem::path> out;
     std::optional<int> override_cores;
+    // Coherence-mode shorthand: overrides cfg.coherence.protocol.
+    std::optional<std::string> protocol_override;
     LogLevel log_level = LogLevel::Info;
     bool show_version = false;
 };

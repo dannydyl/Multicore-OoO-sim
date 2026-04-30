@@ -9,6 +9,8 @@ TEST_CASE("SimConfig JSON round-trip preserves all fields", "[config]") {
     orig.cores = 8;
     orig.interconnect.topology = "xbar";
     orig.interconnect.link_latency = 3;
+    orig.interconnect.link_width_log2 = 4;
+    orig.interconnect.block_size_log2 = 7;
     orig.memory.latency = 200;
     orig.memory.block_size = 128;
     orig.core.fetch_width = 6;
@@ -28,6 +30,8 @@ TEST_CASE("SimConfig JSON round-trip preserves all fields", "[config]") {
     REQUIRE(rt.cores == 8);
     REQUIRE(rt.interconnect.topology == "xbar");
     REQUIRE(rt.interconnect.link_latency == 3);
+    REQUIRE(rt.interconnect.link_width_log2 == 4);
+    REQUIRE(rt.interconnect.block_size_log2 == 7);
     REQUIRE(rt.memory.latency == 200);
     REQUIRE(rt.memory.block_size == 128);
     REQUIRE(rt.core.fetch_width == 6);
@@ -50,6 +54,8 @@ TEST_CASE("Loading configs/baseline.json succeeds with expected values", "[confi
     REQUIRE(cfg.l1.block_size == 64);
     REQUIRE(cfg.l2.size_kb > cfg.l1.size_kb);
     REQUIRE(cfg.core.predictor.type == "yeh_patt");
+    REQUIRE(cfg.interconnect.link_width_log2 == 3);   // 8-byte links
+    REQUIRE(cfg.interconnect.block_size_log2 == 6);   // 64-byte blocks
 }
 
 TEST_CASE("load_config throws ConfigError for missing file", "[config]") {

@@ -1,0 +1,18 @@
+Selected Configuration:
+	Protocol: MOESIF_PRO
+	Trace Directory: traces/core_16
+	Num Procs: 16
+	CPU TYPE: FICI_CPU
+	Network Topology: RING_TOP
+	Link Width: 8 bytes
+	Memory Latency: 100
+	Block Size: 6
+Starting simulation
+Simulation complete
+Cycles: 138666
+Cache Misses:         4116 misses
+Cache Accesses:       5414 accesses
+Silent Upgrades:       116 upgrades
+$-to-$ Transfers:     3159 transfers
+Memory Reads:         1011 reads
+Memory Writes:           0 writes

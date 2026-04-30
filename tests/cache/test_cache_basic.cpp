@@ -231,14 +231,20 @@ TEST_CASE("Cache::issue does not mutate cache state when MSHR is full",
     REQUIRE_FALSE(l1.block_in(0x2000));
 }
 
-TEST_CASE("Cache::issue rejects Write requests",
+TEST_CASE("Cache::issue accepts Write but never merges them",
           "[cache][mshr][precondition]") {
-    // Writes must use access() directly. issue()'s merge fast-path inherits
-    // the primary's AccessResult and skips the dirty-bit mutation, so a
-    // merged-Write secondary would silently lose semantics. Make the
-    // precondition explicit and loud.
+    // Phase 5B: writes go through the async issue/peek/complete path
+    // (the OoO core's stage_schedule LSU section uses it for both
+    // loads and stores under coherence). The merge fast-path is still
+    // disabled for writes — a Write piggybacking on a Read primary
+    // would inherit the primary's clean AccessResult and skip the
+    // dirty-bit mutation. Verify writes always allocate fresh slots.
     Cache l1(small_l1(), "L1");
-    REQUIRE_THROWS_AS(l1.issue({0x1000, Op::Write}), std::invalid_argument);
+    auto a = l1.issue({0x1000, Op::Read});
+    auto b = l1.issue({0x1000, Op::Write});
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    REQUIRE(*a != *b);
 }
 
 TEST_CASE("Cache::access yields the same hit/miss as Cache::issue + peek",

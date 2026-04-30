@@ -3,10 +3,12 @@
 
 #include "comparch/cache/cache_mode.hpp"
 #include "comparch/cli.hpp"
+#include "comparch/coherence/coherence_mode.hpp"
 #include "comparch/config.hpp"
 #include "comparch/log.hpp"
 #include "comparch/ooo/ooo_mode.hpp"
 #include "comparch/predictor/predictor_mode.hpp"
+#include "comparch/full/full_mode.hpp"
 #include "comparch/trace.hpp"
 #include "comparch/version.hpp"
 
@@ -65,22 +67,40 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Coherence and Full modes are accepted by the CLI but have no driver
-    // yet (Phase 5). Returning 0 here would silently lie to scripts that
-    // treat exit code as truth — fail loudly instead, but still emit the
-    // merged config to --out for users who pass --mode full just to render
-    // the resolved config.
-    if (cli.out) {
-        std::ofstream out(*cli.out);
-        if (!out) {
-            LOG_ERROR("cannot open --out file for writing: " << *cli.out);
-            return 3;
+    if (cli.mode == comparch::Mode::Coherence) {
+        try {
+            return comparch::coherence::run_coherence_mode(cfg, cli);
+        } catch (const comparch::ConfigError& e) {
+            LOG_ERROR(e.what());
+            return 2;
+        } catch (const comparch::trace::TraceError& e) {
+            LOG_ERROR("trace: " << e.what());
+            return 4;
         }
-        out << comparch::dump_config(cfg) << '\n';
-        LOG_INFO("wrote merged config to " << *cli.out);
     }
 
-    LOG_ERROR(comparch::to_string(cli.mode)
-              << ": driver not implemented yet (Phase 5)");
+    // Default mode (no --mode flag): full multi-core OoO + coherence.
+    if (cli.mode == comparch::Mode::Full) {
+        if (cli.out) {
+            std::ofstream out(*cli.out);
+            if (!out) {
+                LOG_ERROR("cannot open --out file for writing: " << *cli.out);
+                return 3;
+            }
+            out << comparch::dump_config(cfg) << '\n';
+            LOG_INFO("wrote merged config to " << *cli.out);
+        }
+        try {
+            return comparch::full::run_full_mode(cfg, cli);
+        } catch (const comparch::ConfigError& e) {
+            LOG_ERROR(e.what());
+            return 2;
+        } catch (const comparch::trace::TraceError& e) {
+            LOG_ERROR("trace: " << e.what());
+            return 4;
+        }
+    }
+
+    LOG_ERROR("unhandled mode: " << comparch::to_string(cli.mode));
     return 5;
 }

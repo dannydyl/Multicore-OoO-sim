@@ -16,6 +16,7 @@
 
 #include "comparch/cache/mem_req.hpp"
 #include "comparch/cache/mshr.hpp"
+#include "comparch/log.hpp"
 
 namespace comparch::ooo {
 
@@ -69,6 +70,41 @@ bool OooCore::tick() {
     l1d_->tick();
 
     (void)retired_this_cycle;
+
+    // Watchdog. Snapshot a "did anything change" signature; if it sits
+    // unchanged for cfg_.deadlock_threshold_cycles cycles in a row, the
+    // pipeline is wedged. A genuine multi-cycle DRAM stall keeps the
+    // signature constant only while the load is outstanding (~latency
+    // cycles), so the threshold needs to be set well above that — the
+    // 100k default is conservative.
+    if (cfg_.deadlock_threshold_cycles != 0) {
+        const ProgressSig sig{
+            stats_.instructions_retired,
+            stats_.instructions_fetched,
+            rob_.size(), sq_.size(), dispq_.size(),
+        };
+        if (last_progress_sig_valid_ && sig == last_progress_sig_) {
+            if (++stall_cycles_ >= cfg_.deadlock_threshold_cycles) {
+                stats_.deadlocked = true;
+                stats_.stall_cycles_at_abort = stall_cycles_;
+                LOG_ERROR("OoO core deadlock: no pipeline progress for "
+                          << stall_cycles_ << " cycles at cycle "
+                          << stats_.cycles
+                          << " (rob=" << rob_.size()
+                          << " sq="   << sq_.size()
+                          << " dispq=" << dispq_.size()
+                          << " retired=" << stats_.instructions_retired
+                          << " fetched=" << stats_.instructions_fetched
+                          << " eof="  << eof_
+                          << " in_mispred=" << in_mispred_ << ")");
+                return false;
+            }
+        } else {
+            stall_cycles_ = 0;
+            last_progress_sig_ = sig;
+            last_progress_sig_valid_ = true;
+        }
+    }
 
     // The pipeline is "done" when the trace is exhausted AND nothing is
     // left in any of the queues.
@@ -157,26 +193,24 @@ void OooCore::stage_exec() {
     }
 
     // ----- LSU -----
-    // Stores complete in 1 cycle (project2 frees them immediately on
-    // exec). Loads poll the L1-D MSHR; complete when ready.
+    // Phase 5B: BOTH loads and stores poll the L1-D MSHR. Stores no
+    // longer complete in one cycle because under coherence they may
+    // need to acquire M-state via the directory.
     for (auto& u : lsu_) {
         if (!u.busy) continue;
 
-        if (!u.is_load) {
-            // Store completion: project2 only sets ROB ready and removes
-            // from schedQ — no CDB broadcast (stores don't write a reg).
-            rob_[u.sched_ptr->rob_idx].ready = true;
-            sq_.erase_by_tag(u.sched_ptr->dest_tag);
-            u.busy      = false;
-            u.sched_ptr = nullptr;
-            continue;
-        }
-
-        // Load: poll MSHR.
         const cache::MSHREntry* mshr = l1d_->peek(u.mshr_id);
         if (mshr == nullptr || !mshr->ready) continue;   // wait
 
-        writeback(u.sched_ptr);
+        if (u.is_load) {
+            // Load completion: broadcast on CDB so dependent ops wake.
+            writeback(u.sched_ptr);
+        } else {
+            // Store completion: just mark ROB ready and erase from
+            // schedQ — no CDB broadcast (stores don't write a reg).
+            rob_[u.sched_ptr->rob_idx].ready = true;
+            sq_.erase_by_tag(u.sched_ptr->dest_tag);
+        }
         l1d_->complete(u.mshr_id);
         u.busy      = false;
         u.sched_ptr = nullptr;
@@ -306,38 +340,30 @@ void OooCore::stage_schedule() {
             u.is_load   = (oldest->inst.opcode == Opcode::Load);
             u.sched_ptr = oldest;
 
-            if (u.is_load) {
-                // Issue the load to L1-D. The MSHR's due_cycle reflects
-                // the real round-trip latency; the load's exec polling
-                // loop completes when peek(mshr_id)->ready flips.
-                cache::MemReq req{};
-                req.addr = oldest->inst.mem_addr;
-                req.op   = cache::Op::Read;
-                req.pc   = oldest->inst.pc;
-                auto id = l1d_->issue(req);
-                if (!id) {
-                    // Full() check above should make this unreachable, but
-                    // keep the defensive undo + outer-loop break in case
-                    // a future cache subclass returns nullopt for some
-                    // other reason. Reset is_load too so a stale flag
-                    // can't confuse a future read of this FU's state.
-                    u.busy      = false;
-                    u.is_load   = false;
-                    u.sched_ptr = nullptr;
-                    mshr_stalled = true;
-                    break;
-                }
-                u.mshr_id = *id;
-            } else {
-                // Store: synchronous write through the cache (state
-                // mutations + writeback bookkeeping happen now).
-                cache::MemReq req{};
-                req.addr = oldest->inst.mem_addr;
-                req.op   = cache::Op::Write;
-                req.pc   = oldest->inst.pc;
-                (void)l1d_->access(req);
-                store_fired = true;
+            // Phase 5B: BOTH loads and stores go through the async
+            // issue/peek/complete MSHR path. Stores can't synchronously
+            // complete under coherence — a store needs M-state, which
+            // may require a network round-trip. The store completion
+            // logic in stage_exec polls the same way as loads.
+            cache::MemReq req{};
+            req.addr = oldest->inst.mem_addr;
+            req.op   = u.is_load ? cache::Op::Read : cache::Op::Write;
+            req.pc   = oldest->inst.pc;
+            auto id = l1d_->issue(req);
+            if (!id) {
+                // Full() check above should make this unreachable, but
+                // keep the defensive undo + outer-loop break in case
+                // a future cache subclass returns nullopt for some
+                // other reason. Reset is_load too so a stale flag
+                // can't confuse a future read of this FU's state.
+                u.busy      = false;
+                u.is_load   = false;
+                u.sched_ptr = nullptr;
+                mshr_stalled = true;
+                break;
             }
+            u.mshr_id = *id;
+            if (!u.is_load) store_fired = true;
 
             oldest->busy = true;
             ++num_fires;

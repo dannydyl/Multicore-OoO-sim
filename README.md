@@ -27,11 +27,12 @@ being assembled incrementally; the current state is **Phase 0 (skeleton only)**.
 ## Status
 
 - [x] Phase 0 — skeleton, build system, CLI, JSON config
-- [ ] Phase 1 — canonical trace format and DynamoRIO-based tracer
-- [ ] Phase 2 — L1/L2 cache subsystem
-- [ ] Phase 3 — branch predictors
-- [ ] Phase 4 — out-of-order core
-- [ ] Phase 5 — multi-core + cache coherence
+- [~] Phase 1 — canonical trace format and DynamoRIO-based tracer (reader/writer + synthetic generator landed; tracer pending)
+- [x] Phase 2 — L1/L2 cache subsystem
+- [x] Phase 3 — branch predictors
+- [x] Phase 4 — single-core out-of-order pipeline
+- [x] Phase 5A — multi-core + cache coherence (`--mode coherence`; MI/MSI/MESI/MOSI/MOESIF on a RING)
+- [x] Phase 5B — full multi-core OoO + coherence (the default mode; OoO cores + private L1+L2 + ring + directory)
 - [ ] Phase 6 — polish, results, plots
 
 ## Build

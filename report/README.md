@@ -49,6 +49,23 @@ And the standalone reviews:
    side-effect leak on MSHR-full, OoO LSU busy-loop on the same stall,
    and `--mode coherence` silent exit. All fixed in the same pass with
    tests pinning each regression.
+9. **[07-phase5a-coherence.md](07-phase5a-coherence.md)** — Phase 5A:
+   `--mode coherence`. Five protocols (MI / MSI / MESI / MOSI /
+   MOESIF), RING network, directory, FICI per-core trace driver.
+   Pinned bit-for-bit against project3's `dirsim` reference outputs
+   for `(MSI / MESI / MOSI / MOESIF) × (4 / 8 / 12 / 16 cores)` —
+   16 / 16 combos.
+10. **[08-phase5b-full.md](08-phase5b-full.md)** — Phase 5B: default
+    invocation runs the full multi-core OoO + coherence simulator. N
+    OoO cores, each with private finite L1+L2, all connected through
+    the Phase 5A ring + directory + agents. The simulator engine is
+    feature-complete after this phase.
+11. **[09-config-sweep.md](09-config-sweep.md)** — post-5B
+    configuration sweep: ~30 configs across cores / protocols / cache
+    geometry / DRAM latency / OoO width / predictor. No deadlocks.
+    Headline finding: aggregate IPC saturates at ~0.042 by 4 cores —
+    the single ring + single directory + single DRAM channel is the
+    bottleneck.
 
 ## Status snapshot
 
@@ -59,10 +76,11 @@ And the standalone reviews:
 | 2     | Cache (`--mode cache`)                 | ✅ done     | 41 (incl. 4 proj1 regressions) |
 | 3     | Branch predictor (`--mode predictor`)  | ✅ done     | 11 (incl. 1 proj2 regression with 4 sections) |
 | 4     | OoO core (`--mode ooo`)                | ✅ done     | 8 (basic) + 4 from cache/predictor regressions covering Phase-4 fixes |
-| 5     | Multi-core + coherence                 | not started | —             |
+| 5A    | Coherence (`--mode coherence`)         | ✅ done     | 20 (4 banner + 5 fici + 5 network/message + 3 MI synthetic + 4 proj3 regression cases × multi-core fan-out) |
+| 5B    | Multi-core OoO + coherence (default)   | ✅ done     | 18 (5 CLI dispatch + 4 coherence-sink + 5 WRITEBACK directory + 4 full-mode integration) |
 | 6     | Polish & public release                | not started | —             |
 
-Total tests: **86 / 86 passing**.
+Total tests: **126 / 126 passing**.
 
 ## Build / run cheat sheet
 
