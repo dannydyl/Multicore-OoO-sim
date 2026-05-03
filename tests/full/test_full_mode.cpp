@@ -105,8 +105,11 @@ TEST_CASE("full mode: 1 core, ALU-only trace runs and completes",
     const auto dir = make_alu_only_trace_dir(/*cores=*/1, /*n=*/100, "alu1");
     CoutCapture cap;
     REQUIRE(run(dir, 1, "mesi") == 0);
-    REQUIRE(cap.str().find("Simulation complete") != std::string::npos);
-    REQUIRE(cap.str().find("retired=100") != std::string::npos);
+    const auto out = cap.str();
+    REQUIRE(out.find("Simulation complete") != std::string::npos);
+    REQUIRE(out.find("[ Core 0 ]") != std::string::npos);
+    REQUIRE(out.find("instructions retired") != std::string::npos);
+    REQUIRE(out.find(": 100") != std::string::npos);
 }
 
 TEST_CASE("full mode: 2 cores, ALU-only traces all retire",
@@ -116,9 +119,9 @@ TEST_CASE("full mode: 2 cores, ALU-only traces all retire",
     REQUIRE(run(dir, 2, "mesi") == 0);
     const auto out = cap.str();
     REQUIRE(out.find("Simulation complete") != std::string::npos);
-    // Each core should retire 50 instructions.
-    REQUIRE(out.find("core 0: cycles=") != std::string::npos);
-    REQUIRE(out.find("core 1: cycles=") != std::string::npos);
+    // Both per-core report blocks should be present.
+    REQUIRE(out.find("[ Core 0 ]") != std::string::npos);
+    REQUIRE(out.find("[ Core 1 ]") != std::string::npos);
 }
 
 TEST_CASE("full mode: 4 cores with private loads under MESI",
@@ -130,7 +133,8 @@ TEST_CASE("full mode: 4 cores with private loads under MESI",
     REQUIRE(out.find("Simulation complete") != std::string::npos);
     // Each core retires 30 — ALU + load instructions all complete.
     for (int i = 0; i < 4; ++i) {
-        REQUIRE(out.find("core " + std::to_string(i) + ":") != std::string::npos);
+        REQUIRE(out.find("[ Core " + std::to_string(i) + " ]")
+                != std::string::npos);
     }
 }
 

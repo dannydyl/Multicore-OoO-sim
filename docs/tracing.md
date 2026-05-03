@@ -121,7 +121,7 @@ would synthetic traces.
 
 Until step 5 is real, the simulator is exercising **independent
 synthetic streams**, not actual cooperating threads. Some consequences
-visible in [report/09-config-sweep.md](../report/09-config-sweep.md):
+visible in [report/09-config-sweep.md](../report_doc/09-config-sweep.md):
 
 - **Coherence protocols only differentiate when traces actually share
   addresses.** With 4 cores on disjoint synthetic ranges, MI / MSI /
@@ -168,7 +168,7 @@ engine settles.
       `tools/tracer/pin_champsim/`. Pin is Linux/x86-only but is
       what most published trace corpora were captured with.
 - [ ] **Once the pipeline works:** rerun the
-      [config sweep](../report/09-config-sweep.md) on real
+      [config sweep](../report_doc/09-config-sweep.md) on real
       multi-threaded workloads. Coherence protocols should show
       *real* differentiation, not just the synthetic sharing-only
       result from Sweep 3.

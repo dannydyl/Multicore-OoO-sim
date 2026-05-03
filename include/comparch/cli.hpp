@@ -19,6 +19,9 @@ struct CliArgs {
     std::optional<int> override_cores;
     // Coherence-mode shorthand: overrides cfg.coherence.protocol.
     std::optional<std::string> protocol_override;
+    // Suffix appended to the run-report folder name under report/.
+    // Useful to keep multiple runs of the same config (e.g. --tag baseline).
+    std::optional<std::string> tag;
     LogLevel log_level = LogLevel::Info;
     bool show_version = false;
 };

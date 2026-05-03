@@ -42,6 +42,10 @@ CliParseResult parse_cli(int argc, char** argv) {
             std::vector<std::string>{"mi", "msi", "mesi", "mosi", "moesif"},
             CLI::ignore_case));
 
+    app.add_option("--tag", a.tag,
+                   "Suffix appended to the run-report folder name under report/ "
+                   "(e.g. 'baseline' -> report/<trace>_<proto>_c<N>_baseline/).");
+
     // Default invocation (no --mode) runs the full multi-core OoO + coherence
     // simulator. Subsystem isolation modes (cache / predictor / ooo / coherence)
     // are opt-in for testing pieces in isolation. "full" is intentionally NOT
