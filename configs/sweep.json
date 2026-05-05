@@ -1,0 +1,78 @@
+{
+  "_comment": "Validation sweep matrix. Loaded by scripts/sweep_matrix.py. Edit to change which configs/traces get swept; the harness picks up changes on next run.",
+
+  "synth_tiers": {
+    "tiny":   { "records":     100000 },
+    "small":  { "records":    1000000 },
+    "medium": { "records":   10000000 },
+    "large":  { "records":  100000000 }
+  },
+
+  "synth_patterns": ["sequential", "loop", "stream", "random"],
+
+  "champsim_benches": ["mcf", "perlbench", "server"],
+
+  "axes": {
+    "proto": [
+      ["mi",     { "coherence.protocol": "mi" }],
+      ["msi",    { "coherence.protocol": "msi" }],
+      ["mosi",   { "coherence.protocol": "mosi" }],
+      ["moesif", { "coherence.protocol": "moesif" }]
+    ],
+    "rob": [
+      ["64",  { "core.rob_entries": 64 }],
+      ["128", { "core.rob_entries": 128 }]
+    ],
+    "l1kb": [
+      ["16", { "l1.size_kb": 16 }],
+      ["64", { "l1.size_kb": 64 }]
+    ],
+    "predictor": [
+      ["alwaystaken", { "core.predictor.type": "always_taken" }],
+      ["perceptron",  { "core.predictor.type": "perceptron" }],
+      ["hybrid",      { "core.predictor.type": "hybrid" }]
+    ],
+    "pf": [
+      ["markov", { "l1.prefetcher": "markov" }],
+      ["hybrid", { "l1.prefetcher": "hybrid" }]
+    ],
+    "cores": [
+      ["2", { "cores": 2 }]
+    ]
+  },
+
+  "handpicked": [
+    ["hp_mesi_perceptron_pf_rob128",
+      { "coherence.protocol": "mesi", "core.predictor.type": "perceptron",
+        "l1.prefetcher": "markov", "core.rob_entries": 128 }],
+    ["hp_moesif_rob128_l164",
+      { "coherence.protocol": "moesif", "core.rob_entries": 128, "l1.size_kb": 64 }],
+    ["hp_mi_rob64",
+      { "coherence.protocol": "mi", "core.rob_entries": 64 }],
+    ["hp_mesi_cores2",
+      { "coherence.protocol": "mesi", "cores": 2 }]
+  ],
+
+  "tiers": {
+    "smoke":  { "synth_sizes": ["tiny"],
+                "champsim":    [],
+                "axes":        ["proto"],
+                "handpicked":  false },
+    "short":  { "synth_sizes": ["tiny", "small"],
+                "champsim":    ["mcf"],
+                "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
+                "handpicked":  false },
+    "medium": { "synth_sizes": ["tiny", "small", "medium"],
+                "champsim":    ["mcf", "perlbench"],
+                "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
+                "handpicked":  true },
+    "long":   { "synth_sizes": ["tiny", "small", "medium", "large"],
+                "champsim":    ["mcf", "perlbench", "server"],
+                "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
+                "handpicked":  true },
+    "all":    { "synth_sizes": ["tiny", "small", "medium", "large"],
+                "champsim":    ["mcf", "perlbench", "server"],
+                "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
+                "handpicked":  true }
+  }
+}

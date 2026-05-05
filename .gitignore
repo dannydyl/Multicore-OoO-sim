@@ -40,6 +40,10 @@ compile_commands.json
 *.swo
 *~
 
+# Python (validation sweep harness)
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db
