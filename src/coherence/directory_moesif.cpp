@@ -37,6 +37,87 @@ void DirectoryController::MOESIF_tick() {
                 entry->presence[request->src] = true;
                 ++entry->active_sharers;
                 dequeue();
+            } else if (entry->state == DirState::I && request->kind == MessageKind::GETX) {
+                // Eviction-desync: an E-holder evicted (DATA_WB drove dir
+                // to I) but the agent FSM stayed in E and STORE'd, sending
+                // GETX. Mirror (I, GETM): mem-fetch, grant exclusive.
+                request_in_progress = true;
+                tag_to_send   = request->block;
+                target_node   = request->src;
+                response_time = current_clock_ + settings_.mem_latency;
+                entry->state  = DirState::M;
+                entry->presence[request->src] = true;
+                ++entry->active_sharers;
+                dequeue();
+            } else if (entry->state == DirState::S && request->kind == MessageKind::GETS) {
+                // MOESIF reaches DirState::S via the shared handle_writeback
+                // when an O/F-holder evicts while other sharers remain. The
+                // protocol normally avoids S as a stable state, but once
+                // there, fall back to MSI-style handling: mem-fetch + add
+                // requester to presence; line stays S.
+                request_in_progress = true;
+                tag_to_send   = request->block;
+                target_node   = request->src;
+                response_time = current_clock_ + settings_.mem_latency;
+                if (!entry->presence[request->src]) {
+                    entry->presence[request->src] = true;
+                    ++entry->active_sharers;
+                }
+                dequeue();
+            } else if (entry->state == DirState::S &&
+                       (request->kind == MessageKind::GETM ||
+                        request->kind == MessageKind::GETX)) {
+                // Same recovery path: invalidate other sharers, transition
+                // to SM while we wait for INVACKs.
+                entry->inv_ack_waiting = 0;
+                for (NodeId i = 0; i < settings_.num_procs; ++i) {
+                    if (entry->presence[i] && i != request->src) {
+                        ++entry->inv_ack_waiting;
+                        send_Request(i, request->block, MessageKind::REQ_INVALID);
+                    }
+                }
+                entry->req_node_in_transient = request->src;
+                if (entry->inv_ack_waiting == 0) {
+                    // Requester is the only sharer (or none); silent upgrade.
+                    send_Request(request->src, request->block, MessageKind::ACK);
+                    if (!entry->presence[request->src]) {
+                        entry->presence[request->src] = true;
+                        ++entry->active_sharers;
+                    }
+                    entry->state = DirState::M;
+                    entry->dirty = true;
+                } else {
+                    entry->state = DirState::SM;
+                }
+                dequeue();
+            } else if (entry->state == DirState::SM && request->kind == MessageKind::INVACK) {
+                // Drain INVACKs from the (S, GETM/GETX) recovery path. Same
+                // shape as MSI's SM-INVACK handler.
+                if (entry->inv_ack_waiting >= 1) {
+                    entry->presence[request->src] = false;
+                    --entry->inv_ack_waiting;
+                    --entry->active_sharers;
+                } else {
+                    throw std::runtime_error("MOESIF dir: too many INVACKs (SM)");
+                }
+                if (entry->inv_ack_waiting == 0) {
+                    if (entry->presence[entry->req_node_in_transient]) {
+                        send_Request(entry->req_node_in_transient,
+                                     request->block, MessageKind::ACK);
+                        entry->state = DirState::M;
+                        entry->dirty = true;
+                    } else {
+                        request_in_progress = true;
+                        tag_to_send   = request->block;
+                        target_node   = entry->req_node_in_transient;
+                        response_time = current_clock_ + settings_.mem_latency;
+                        entry->presence[entry->req_node_in_transient] = true;
+                        ++entry->active_sharers;
+                        entry->state = DirState::M;
+                        entry->dirty = true;
+                    }
+                }
+                dequeue();
             } else if (entry->state == DirState::M && request->kind == MessageKind::GETM) {
                 tag_to_send = request->block;
                 target_node = static_cast<NodeId>(-1);
@@ -332,7 +413,8 @@ void DirectoryController::MOESIF_tick() {
             } else if ((entry->state == DirState::MM || entry->state == DirState::MO ||
                         entry->state == DirState::EM || entry->state == DirState::EF ||
                         entry->state == DirState::FM || entry->state == DirState::FF ||
-                        entry->state == DirState::OM || entry->state == DirState::OO) &&
+                        entry->state == DirState::OM || entry->state == DirState::OO ||
+                        entry->state == DirState::SM) &&
                        (request->kind == MessageKind::GETM ||
                         request->kind == MessageKind::GETS ||
                         request->kind == MessageKind::GETX)) {

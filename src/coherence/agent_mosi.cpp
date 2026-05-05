@@ -171,6 +171,12 @@ void MosiAgent::do_ntwk_SM(const Message& req) {
             send_DATA_proc(req.block);
             state_ = MosiState::M;
             break;
+        // Eviction-induced presence loss: directory replies with DATA on
+        // the memory-fetch path. Same shape as IM->M.
+        case MessageKind::DATA:
+            send_DATA_proc(req.block);
+            state_ = MosiState::M;
+            break;
         default: bad_msg("SM", "ntwk", req.kind);
     }
 }

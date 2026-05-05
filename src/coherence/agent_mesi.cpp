@@ -172,6 +172,13 @@ void MesiAgent::do_ntwk_SM(const Message& req) {
             send_DATA_proc(req.block);
             state_ = MesiState::M;
             break;
+        // Eviction can clear our line in S without driving the agent FSM,
+        // so the directory may see presence[us]=false at our GETM and reply
+        // with DATA (memory-fetch path) instead of ACK. Mirror IM->M.
+        case MessageKind::DATA:
+            send_DATA_proc(req.block);
+            state_ = MesiState::M;
+            break;
         default: bad_msg("SM", "ntwk", req.kind);
     }
 }
@@ -187,6 +194,14 @@ void MesiAgent::do_ntwk_EM(const Message& req) {
             state_ = MesiState::SM;
             break;
         case MessageKind::ACK:
+            send_DATA_proc(req.block);
+            state_ = MesiState::M;
+            break;
+        // Eviction-desync companion to the directory's (I, GETX) handler:
+        // we issued a silent-upgrade GETX from a desynced E-state, the
+        // directory had no record of us, fetched from memory, and replied
+        // with DATA. Accept it and transition to M.
+        case MessageKind::DATA:
             send_DATA_proc(req.block);
             state_ = MesiState::M;
             break;

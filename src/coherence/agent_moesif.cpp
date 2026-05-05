@@ -245,6 +245,12 @@ void MoesifAgent::do_ntwk_SM(const Message& req) {
             send_DATA_proc(req.block);
             state_ = MoesifState::M;
             break;
+        // Eviction-induced presence loss: directory replies with DATA on
+        // the memory-fetch path. Same shape as IM->M.
+        case MessageKind::DATA:
+            send_DATA_proc(req.block);
+            state_ = MoesifState::M;
+            break;
         default: bad_msg("SM", "ntwk", req.kind);
     }
 }
@@ -260,6 +266,11 @@ void MoesifAgent::do_ntwk_EM(const Message& req) {
             state_ = MoesifState::FM;
             break;
         case MessageKind::ACK:
+            send_DATA_proc(req.block);
+            state_ = MoesifState::M;
+            break;
+        // Eviction-desync companion to dir's (I, GETX) recovery.
+        case MessageKind::DATA:
             send_DATA_proc(req.block);
             state_ = MoesifState::M;
             break;
@@ -281,6 +292,10 @@ void MoesifAgent::do_ntwk_FM(const Message& req) {
             send_DATA_proc(req.block);
             state_ = MoesifState::M;
             break;
+        case MessageKind::DATA:
+            send_DATA_proc(req.block);
+            state_ = MoesifState::M;
+            break;
         default: bad_msg("FM", "ntwk", req.kind);
     }
 }
@@ -296,6 +311,10 @@ void MoesifAgent::do_ntwk_OM(const Message& req) {
             state_ = MoesifState::IM;
             break;
         case MessageKind::ACK:
+            send_DATA_proc(req.block);
+            state_ = MoesifState::M;
+            break;
+        case MessageKind::DATA:
             send_DATA_proc(req.block);
             state_ = MoesifState::M;
             break;

@@ -47,7 +47,16 @@ namespace comparch::full {
 
 namespace {
 
-constexpr coherence::Timestamp kGlobalCap = 5'000'000;
+// Backstop against deadlock-shaped runs. 5M was too aggressive for
+// homogeneous-shared synthetic workloads; 50M is a pragmatic compromise
+// that catches genuine deadlocks without dragging tail-latency runs for
+// 30 min. A 500M-cap diagnostic (see report_doc/11-validation-bugs.md
+// "Empirical disambiguation") confirmed 42 of 44 cap-hit cases at 50M
+// are slow-but-progressing and complete within 500M, plus 2 MI tail
+// outliers that don't even fit in 30 min wallclock. The "real" fix is
+// either heterogeneous traces or a finer-grained no-progress watchdog;
+// this constant stays at 50M for routine harness use.
+constexpr coherence::Timestamp kGlobalCap = 50'000'000;
 
 // Per-core ownership pack. The Network holds non-owning pointers into
 // these (CoherenceAdapter as CpuPort, adapter->coh_cache() as the

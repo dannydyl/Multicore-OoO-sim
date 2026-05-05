@@ -156,6 +156,15 @@ void MsiAgent::do_ntwk_SM(const Message& req) {
             send_DATA_proc(req.block);
             state_ = MsiState::M;
             break;
+        // Cache-side eviction can clear our line in S without notifying the
+        // agent FSM (on_evict bypasses the agent). When the directory then
+        // sees presence[us]=false at our subsequent GETM, it falls into the
+        // memory-fetch path and answers with DATA instead of ACK. Treat it
+        // like IM->M: accept the data, become M.
+        case MessageKind::DATA:
+            send_DATA_proc(req.block);
+            state_ = MsiState::M;
+            break;
         default:
             bad_msg("SM", "ntwk", req.kind);
     }

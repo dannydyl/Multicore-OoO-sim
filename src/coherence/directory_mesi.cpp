@@ -35,6 +35,22 @@ void DirectoryController::MESI_tick() {
                 entry->presence[request->src] = true;
                 ++entry->active_sharers;
                 dequeue();
+            } else if (entry->state == DirState::I && request->kind == MessageKind::GETX) {
+                // Eviction-desync path: an E-holder evicted (DATA_WB drove
+                // the directory to I), but the agent FSM stayed in E and
+                // its CPU then issued a STORE, sending GETX as the silent-
+                // upgrade signal. Treat it like (I, GETM): fetch from
+                // memory and grant exclusive. The agent is in EM; the
+                // EM ntwk handler accepts incoming DATA and transitions
+                // to M (see agent_mesi.cpp do_ntwk_EM).
+                request_in_progress = true;
+                tag_to_send   = request->block;
+                target_node   = request->src;
+                response_time = current_clock_ + settings_.mem_latency;
+                entry->state  = DirState::M;
+                entry->presence[request->src] = true;
+                ++entry->active_sharers;
+                dequeue();
             } else if (entry->state == DirState::M && request->kind == MessageKind::GETM) {
                 tag_to_send = request->block;
                 target_node = static_cast<NodeId>(-1);
