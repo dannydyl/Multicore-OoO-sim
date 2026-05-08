@@ -18,51 +18,96 @@ JOBS ?= 8
 TIMEOUT ?= 1800
 SWEEP_CFG ?= configs/sweep.json
 
+# Compile-time knob (override on command line, e.g. make build FAST=1).
+# Maps to the CASIM_FAST option in CMakeLists.txt (-O2).
+FAST ?= 0
+
 SCRIPTS := scripts
 BUILD_DIR := build-release
 SIM_BIN := $(BUILD_DIR)/src/sim
 GEN_TRACE_BIN := $(BUILD_DIR)/tools/gen_trace/gen_trace
 REPORT_DIR := report
 
+# 1/0/y/n -> ON/OFF for cmake
+bool = $(if $(filter 1 ON on YES yes y true,$1),ON,OFF)
+
+CMAKE_FLAGS := -DCASIM_FAST=$(call bool,$(FAST))
+
+# Non-empty when FAST was explicitly passed on the command line — in that
+# case `build` reconfigures cmake. Otherwise it keeps the existing
+# skip-if-present fast path so `make sweep` doesn't re-run cmake every time.
+OPT_OVERRIDDEN := $(if $(filter command line,$(origin FAST)),1)
+
 .PHONY: help build traces gen-synth fetch-traces \
         smoke short medium long sweep aggregate \
         clean clean-all clean-traces \
         list dry-run
 
+define HELP_TEXT
+
+    __  ___      ____  _    _____ _
+   /  |/  /_  __/ / /_(_)  / ___/(_)___ ___
+  / /|_/ / / / / / __/ /   \__ \/ / __ `__ \ 
+ / /  / / /_/ / / /_/ /   ___/ / / / / / / /
+/_/  /_/\__,_/_/\__/_/   /____/_/_/ /_/ /_/
+   Out-of-Order Multicore  ·  sweep harness
+   build ─▶ traces ─▶ sweep ─▶ aggregate
+
+  First time?   make smoke      (~1 min, tiny synth)
+  Quick check?  make short      (~10 min, +champsim)
+  Full run?     make long       (overnight, 100M synth)
+
+USAGE
+  make <target> [VAR=value ...]
+
+TARGETS
+  smoke | short | medium | long     end-to-end (build+traces+sweep+aggregate)
+  build                             cmake build only
+  traces            [TIER=<t>]      gen-synth + fetch-traces
+  sweep      TIER=<t> SWEEP_ID=<id> run sweep (no aggregate)
+  aggregate  SWEEP_ID=<id>          parse + write summary.md
+  dry-run    TIER=<t>               list runs without executing
+  list                              show configured tiers
+  clean      SWEEP_ID=<id>          remove one sweep's artifacts
+  clean-all                         remove every sweep under report/
+  clean-traces                      remove traces/synth + traces/champsim
+
+VARIABLES (override on command line)
+  TIER=smoke   SWEEP_ID=smoke   JOBS=8   TIMEOUT=1800
+  SWEEP_CFG=configs/sweep.json
+
+BUILD OPTIONS (override on `make build`; reconfigures cmake)
+  FAST=1       -O2 optimization
+
+EXAMPLES
+  $$ make smoke
+  $$ make build FAST=1
+  $$ make short SWEEP_ID=v3 JOBS=4
+  $$ make sweep TIER=long SWEEP_ID=overnight
+  $$ make clean SWEEP_ID=v3
+
+endef
+export HELP_TEXT
+
 help:
-	@echo "Sweep harness"
-	@echo ""
-	@echo "Tier shortcuts (build + traces + sweep + aggregate):"
-	@echo "  make smoke      [SWEEP_ID=$(SWEEP_ID)]   tiny synth, proto axis only"
-	@echo "  make short      [SWEEP_ID=...]           tiny+small + champsim, all axes"
-	@echo "  make medium     [SWEEP_ID=...]           up to 10M synth, 2 champsim"
-	@echo "  make long       [SWEEP_ID=...]           up to 100M synth, 3 champsim"
-	@echo ""
-	@echo "Building blocks:"
-	@echo "  make build                         cmake --build $(BUILD_DIR) -j"
-	@echo "  make traces TIER=<t>               gen_synth.py + fetch_traces.sh"
-	@echo "  make gen-synth TIER=<t>            synth traces only"
-	@echo "  make fetch-traces                  download ChampSim public traces"
-	@echo "  make sweep TIER=<t> SWEEP_ID=<id>  run sweep without aggregate"
-	@echo "  make aggregate SWEEP_ID=<id>       parse + summarize a sweep"
-	@echo "  make dry-run TIER=<t>              list runs without executing"
-	@echo "  make list                          list configured tiers"
-	@echo ""
-	@echo "Cleanup:"
-	@echo "  make clean SWEEP_ID=<id>           rm one sweep's artifacts"
-	@echo "  make clean-all CONFIRM=y           rm every sweep + per-run dir"
-	@echo "  make clean-traces CONFIRM=y        rm generated synth + champsim trace dirs"
-	@echo ""
-	@echo "Variables (override with VAR=...):"
-	@echo "  TIER=$(TIER)  SWEEP_ID=$(SWEEP_ID)  JOBS=$(JOBS)  TIMEOUT=$(TIMEOUT)  SWEEP_CFG=$(SWEEP_CFG)"
+	@printf '%s\n' "$$HELP_TEXT"
+	@printf 'Current: TIER=%s  SWEEP_ID=%s  JOBS=%s  TIMEOUT=%s  SWEEP_CFG=%s\n\n' \
+	    '$(TIER)' '$(SWEEP_ID)' '$(JOBS)' '$(TIMEOUT)' '$(SWEEP_CFG)'
 
 build:
+ifdef OPT_OVERRIDDEN
+	@echo "==> cmake configure $(BUILD_DIR) (FAST=$(FAST))"
+	@cmake -S . -B $(BUILD_DIR) $(CMAKE_FLAGS)
+	@echo "==> cmake --build $(BUILD_DIR) -j"
+	@cmake --build $(BUILD_DIR) -j
+else
 	@if [ ! -x $(SIM_BIN) ] || [ ! -x $(GEN_TRACE_BIN) ]; then \
 		echo "==> cmake --build $(BUILD_DIR)"; \
 		cmake --build $(BUILD_DIR) -j; \
 	else \
-		echo "==> binaries present (skip build); run 'cmake --build $(BUILD_DIR) -j' to refresh"; \
+		echo "==> binaries present (skip build); pass FAST=1 to reconfigure"; \
 	fi
+endif
 
 gen-synth: build
 	@echo "==> gen_synth --tier $(TIER) (--sweep-config $(SWEEP_CFG))"
@@ -126,7 +171,7 @@ long:
 # Cleanup. SWEEP_ID-scoped to avoid wiping more than asked.
 clean:
 	@if [ -z "$(SWEEP_ID)" ] || [ "$(SWEEP_ID)" = "all" ]; then \
-		echo "ERROR: refusing to clean without explicit SWEEP_ID (got '$(SWEEP_ID)'); use 'make clean-all CONFIRM=y' to nuke everything"; \
+		echo "ERROR: refusing to clean without explicit SWEEP_ID (got '$(SWEEP_ID)'); use 'make clean-all' to nuke everything"; \
 		exit 1; \
 	fi
 	@echo "==> cleaning sweep '$(SWEEP_ID)'"
@@ -137,14 +182,7 @@ clean:
 	@echo "done."
 
 clean-all:
-	@if [ "$(CONFIRM)" != "y" ]; then \
-		echo "About to remove ALL sweep artifacts under $(REPORT_DIR)/:"; \
-		ls -d $(REPORT_DIR)/_sweep $(REPORT_DIR)/*__* 2>/dev/null || echo "  (nothing to clean)"; \
-		echo ""; \
-		echo "Re-run with CONFIRM=y to proceed:  make clean-all CONFIRM=y"; \
-		exit 1; \
-	fi
-	@echo "==> removing all sweep artifacts"
+	@echo "==> removing all sweep artifacts under $(REPORT_DIR)/"
 	@rm -rf $(REPORT_DIR)/_sweep
 	@for d in $(REPORT_DIR)/*__*; do \
 		if [ -d "$$d" ]; then rm -rf "$$d"; fi; \
@@ -152,13 +190,6 @@ clean-all:
 	@echo "done."
 
 clean-traces:
-	@if [ "$(CONFIRM)" != "y" ]; then \
-		echo "About to remove generated traces:"; \
-		echo "  traces/synth/   (regen with 'make gen-synth')"; \
-		echo "  traces/champsim/ (re-fetch with 'make fetch-traces')"; \
-		echo ""; \
-		echo "Re-run with CONFIRM=y to proceed:  make clean-traces CONFIRM=y"; \
-		exit 1; \
-	fi
+	@echo "==> removing traces/synth and traces/champsim"
 	@rm -rf traces/synth traces/champsim
 	@echo "done."
