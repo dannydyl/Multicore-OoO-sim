@@ -95,6 +95,7 @@ int run_ooo_mode(const SimConfig& cfg, const CliArgs& cli) {
     occ.fetch_width           = static_cast<std::size_t>(cfg.core.fetch_width);
     occ.rob_entries           = static_cast<std::size_t>(cfg.core.rob_entries);
     occ.schedq_entries_per_fu = static_cast<std::size_t>(cfg.core.schedq_entries_per_fu);
+    occ.dispq_capacity        = static_cast<std::size_t>(cfg.core.dispq_capacity);
     occ.alu_fus               = static_cast<std::size_t>(cfg.core.alu_fus);
     occ.mul_fus               = static_cast<std::size_t>(cfg.core.mul_fus);
     occ.lsu_fus               = static_cast<std::size_t>(cfg.core.lsu_fus);

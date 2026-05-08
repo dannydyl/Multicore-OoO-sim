@@ -47,6 +47,7 @@ struct CoreConfig {
     int fetch_width = 4;
     int rob_entries = 96;
     int schedq_entries_per_fu = 2;
+    int dispq_capacity = 32;
     int alu_fus = 3;
     int mul_fus = 2;
     int lsu_fus = 2;

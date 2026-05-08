@@ -14,6 +14,7 @@
     "fetch_width": 4,
     "rob_entries": 96,
     "schedq_entries_per_fu": 2,
+    "dispq_capacity": 32,
     "alu_fus": 3,
     "mul_fus": 2,
     "lsu_fus": 2,

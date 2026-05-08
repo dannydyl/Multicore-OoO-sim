@@ -84,6 +84,7 @@ void to_json(nlohmann::json& j, const CoreConfig& v) {
         {"fetch_width", v.fetch_width},
         {"rob_entries", v.rob_entries},
         {"schedq_entries_per_fu", v.schedq_entries_per_fu},
+        {"dispq_capacity", v.dispq_capacity},
         {"alu_fus", v.alu_fus},
         {"mul_fus", v.mul_fus},
         {"lsu_fus", v.lsu_fus},
@@ -98,6 +99,7 @@ void from_json(const nlohmann::json& j, CoreConfig& v) {
     v.fetch_width               = j.value("fetch_width",               v.fetch_width);
     v.rob_entries               = j.value("rob_entries",               v.rob_entries);
     v.schedq_entries_per_fu     = j.value("schedq_entries_per_fu",     v.schedq_entries_per_fu);
+    v.dispq_capacity            = j.value("dispq_capacity",            v.dispq_capacity);
     v.alu_fus                   = j.value("alu_fus",                   v.alu_fus);
     v.mul_fus                   = j.value("mul_fus",                   v.mul_fus);
     v.lsu_fus                   = j.value("lsu_fus",                   v.lsu_fus);
