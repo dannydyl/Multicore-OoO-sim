@@ -11,12 +11,12 @@
     "block_size": 64
   },
   "core": {
-    "fetch_width": 4,
-    "rob_entries": 96,
+    "fetch_width": 8,
+    "rob_entries": 64,
     "schedq_entries_per_fu": 2,
     "dispq_capacity": 32,
-    "alu_fus": 3,
-    "mul_fus": 2,
+    "alu_fus": 8,
+    "mul_fus": 4,
     "lsu_fus": 2,
     "alu_stages": 1,
     "mul_stages": 3,
