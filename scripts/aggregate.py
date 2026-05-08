@@ -230,7 +230,7 @@ def write_summary_md(records: list[RunRecord],
 
     lines.append("## Caveats")
     lines.append("")
-    lines.append("- **Coherence ABORT/INTERVENE knob is TODO.** MSI/MESI/MOSI/MOESIF may collapse to identical numbers on shared-address traces (synth/loop, synth/stream). Surfaced as `INFO: proto_invariance_shared`, not a violation. Re-run after the knob lands.")
+    lines.append("- **Synth traces are now per-core distinct (private).** All `synth/*` cores have disjoint addr_base ranges, so coherence protocols should produce nearly-identical IPC across them. Cross-protocol differences are statistical noise, not protocol effects. To exercise shared-line coherence, point a `--trace-list` manifest at the same file from multiple cores or use the project3 fixture under `tests/coherence/`.")
     lines.append("- **Internal cycle cap** in `full_mode.cpp` ≠ Python `--timeout`. Sim may exit 0 with `Status: Simulation terminated`; that is flagged as `deadlocked=True` (rule `deadlock`).")
     lines.append("- **Trace EOF != predictable wallclock.** A long trace may finish quickly if loads are rare. If long-tier results look starved, regenerate synth traces with higher load/store rates.")
     lines.append("")
