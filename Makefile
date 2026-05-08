@@ -18,6 +18,14 @@ JOBS ?= 8
 TIMEOUT ?= 1800
 SWEEP_CFG ?= configs/sweep.json
 
+# Single-run knobs for `make run`. Lowercase aliases let users type
+# `make run trace=...` instead of `TRACE=...`.
+CONFIG   ?= configs/baseline.json
+TRACE    ?= $(trace)
+TAG      ?= $(tag)
+PROTOCOL ?= $(protocol)
+CORES    ?= $(cores)
+
 # Compile-time knob (override on command line, e.g. make build FAST=1).
 # Maps to the CASIM_FAST option in CMakeLists.txt (-O2).
 FAST ?= 0
@@ -38,9 +46,9 @@ CMAKE_FLAGS := -DCASIM_FAST=$(call bool,$(FAST))
 # skip-if-present fast path so `make sweep` doesn't re-run cmake every time.
 OPT_OVERRIDDEN := $(if $(filter command line,$(origin FAST)),1)
 
-.PHONY: help build traces gen-synth fetch-traces \
+.PHONY: help build run traces gen-synth fetch-traces \
         smoke short medium long sweep aggregate \
-        clean clean-all clean-traces \
+        clean clean-all clean-reports clean-traces \
         list dry-run
 
 define HELP_TEXT
@@ -61,6 +69,7 @@ USAGE
   make <target> [VAR=value ...]
 
 TARGETS
+  run        TRACE=<dir|file>       run one simulation (auto-detects cores)
   smoke | short | medium | long     end-to-end (build+traces+sweep+aggregate)
   build                             cmake build only
   traces            [TIER=<t>]      gen-synth + fetch-traces
@@ -69,18 +78,26 @@ TARGETS
   dry-run    TIER=<t>               list runs without executing
   list                              show configured tiers
   clean      SWEEP_ID=<id>          remove one sweep's artifacts
-  clean-all                         remove every sweep under report/
+  clean-reports                     remove EVERYTHING under report/ (sweeps + manual runs)
+  clean-all                         alias for clean-reports
   clean-traces                      remove traces/synth + traces/champsim
 
 VARIABLES (override on command line)
   TIER=smoke   SWEEP_ID=smoke   JOBS=8   TIMEOUT=1800
   SWEEP_CFG=configs/sweep.json
 
+  Single-run vars (for `make run`; lowercase aliases also accepted):
+  TRACE=<dir|file>  CONFIG=configs/baseline.json
+  CORES=<n>         TAG=<name>          PROTOCOL=<mi|msi|mesi|mosi|moesif>
+
 BUILD OPTIONS (override on `make build`; reconfigures cmake)
   FAST=1       -O2 optimization
 
 EXAMPLES
   $$ make smoke
+  $$ make run TRACE=traces/core_4
+  $$ make run TRACE=traces/synth/random_small TAG=v1 PROTOCOL=mosi
+  $$ make run trace=traces/mix.txt config=configs/baseline.json
   $$ make build FAST=1
   $$ make short SWEEP_ID=v3 JOBS=4
   $$ make sweep TIER=long SWEEP_ID=overnight
@@ -108,6 +125,42 @@ else
 		echo "==> binaries present (skip build); pass FAST=1 to reconfigure"; \
 	fi
 endif
+
+# Run a single simulation against one trace source.
+#
+#   make run TRACE=traces/core_4
+#   make run TRACE=traces/synth/random_small TAG=v1 PROTOCOL=mosi
+#   make run trace=traces/mix.txt   config=configs/baseline.json
+#
+# When TRACE is a directory we pass --trace-dir and auto-set --cores to
+# the number of p*.champsimtrace files inside (unless CORES is overridden).
+# When TRACE is a regular file we pass --trace-list. Defaults: CONFIG =
+# configs/baseline.json. Lowercase variable forms (trace, tag, cores,
+# protocol, config) are accepted as aliases.
+run: build
+	@if [ -z "$(TRACE)" ]; then \
+	    echo "ERROR: TRACE not set."; \
+	    echo "Usage:  make run TRACE=<traces/dir-or-manifest> [CONFIG=...] [CORES=N] [TAG=name] [PROTOCOL=mi|msi|mesi|mosi|moesif]"; \
+	    exit 1; \
+	fi
+	@cores_arg=""; tag_arg=""; proto_arg=""; flag=""; \
+	if [ -d "$(TRACE)" ]; then \
+	    flag="--trace-dir"; \
+	    if [ -z "$(CORES)" ]; then \
+	        n=$$(ls "$(TRACE)"/p*.champsimtrace 2>/dev/null | wc -l | tr -d ' '); \
+	        if [ "$$n" -gt 0 ]; then cores_arg="--cores $$n"; fi; \
+	    fi; \
+	elif [ -f "$(TRACE)" ]; then \
+	    flag="--trace-list"; \
+	else \
+	    echo "ERROR: TRACE='$(TRACE)' is neither a directory nor a file"; \
+	    exit 2; \
+	fi; \
+	if [ -n "$(CORES)" ]; then cores_arg="--cores $(CORES)"; fi; \
+	if [ -n "$(TAG)" ]; then tag_arg="--tag $(TAG)"; fi; \
+	if [ -n "$(PROTOCOL)" ]; then proto_arg="--protocol $(PROTOCOL)"; fi; \
+	echo "==> $(SIM_BIN) --config $(CONFIG) $$flag $(TRACE) $$cores_arg $$tag_arg $$proto_arg"; \
+	$(SIM_BIN) --config $(CONFIG) $$flag $(TRACE) $$cores_arg $$tag_arg $$proto_arg
 
 gen-synth: build
 	@echo "==> gen_synth --tier $(TIER) (--sweep-config $(SWEEP_CFG))"
@@ -181,12 +234,16 @@ clean:
 	done
 	@echo "done."
 
-clean-all:
-	@echo "==> removing all sweep artifacts under $(REPORT_DIR)/"
-	@rm -rf $(REPORT_DIR)/_sweep
-	@for d in $(REPORT_DIR)/*__*; do \
-		if [ -d "$$d" ]; then rm -rf "$$d"; fi; \
-	done
+clean-all: clean-reports
+
+# Remove every report directory: sweep aggregations (report/_sweep/*),
+# sweep per-run dirs (report/*__*), and manual single-run dirs (report/*
+# without the __ separator). Keeps the report/ directory itself.
+clean-reports:
+	@echo "==> removing all reports under $(REPORT_DIR)/"
+	@if [ -d $(REPORT_DIR) ]; then \
+		find $(REPORT_DIR) -mindepth 1 -maxdepth 1 -exec rm -rf {} +; \
+	fi
 	@echo "done."
 
 clean-traces:
