@@ -30,6 +30,14 @@ CliParseResult parse_cli(int argc, char** argv) {
                    "Used by --mode coherence; mutually exclusive with --trace.")
         ->check(CLI::ExistingDirectory);
 
+    app.add_option("--trace-list", a.trace_list,
+                   "Per-core trace manifest: one path per line (blank/'#' "
+                   "lines skipped, relative paths resolve against the "
+                   "manifest's directory). Number of entries must equal "
+                   "cores. Full mode only; mutually exclusive with --trace "
+                   "and --trace-dir.")
+        ->check(CLI::ExistingFile);
+
     app.add_option("--out", a.out, "Write merged config JSON to this path");
 
     app.add_option("--cores", a.override_cores, "Override 'cores' from the config")
@@ -82,8 +90,11 @@ CliParseResult parse_cli(int argc, char** argv) {
         a.log_level = *l;
     }
 
-    if (a.trace && a.trace_dir) {
-        std::cerr << "--trace and --trace-dir are mutually exclusive\n";
+    const int trace_inputs = (a.trace ? 1 : 0) + (a.trace_dir ? 1 : 0) +
+                             (a.trace_list ? 1 : 0);
+    if (trace_inputs > 1) {
+        std::cerr << "--trace, --trace-dir, and --trace-list are mutually "
+                     "exclusive\n";
         r.should_exit = true;
         r.exit_code = 1;
     }

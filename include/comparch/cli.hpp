@@ -14,6 +14,11 @@ struct CliArgs {
     // Per-core trace directory (project3 layout: <dir>/p<i>.trace). Used by
     // --mode coherence; mutually exclusive with --trace.
     std::optional<std::filesystem::path> trace_dir;
+    // Per-core trace manifest file: one path per line (blank/'#' lines
+    // skipped, relative paths resolve against the manifest's directory).
+    // Lets full mode mix workloads across cores. Mutually exclusive with
+    // --trace and --trace-dir.
+    std::optional<std::filesystem::path> trace_list;
     Mode mode = Mode::Full;
     std::optional<std::filesystem::path> out;
     std::optional<int> override_cores;
