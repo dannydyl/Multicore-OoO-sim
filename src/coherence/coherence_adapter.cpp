@@ -72,6 +72,13 @@ void CoherenceAdapter::on_miss(std::uint64_t block_addr, cache::Op op) {
     const auto byte_block = to_byte_block(block_addr, settings_.block_size_log2);
     const auto kind       = (op == cache::Op::Write) ? MessageKind::STORE
                                                      : MessageKind::LOAD;
+    // Remember store misses so the fill response can mark L1 dirty.
+    // MSHR merging means a load and a store on the same block coalesce
+    // into one outstanding request; if any of the merged ops is a
+    // store, the resulting line owes a writeback once it gets evicted.
+    if (op == cache::Op::Write) {
+        pending_stores_.insert(byte_block);
+    }
     // Buffer pending requests. coh_cache->cpu_in_next is a single slot
     // and the OoO core's multi-LSU configuration may issue several
     // misses in the same cycle. tick() drains at most one per cycle
@@ -110,14 +117,16 @@ void CoherenceAdapter::tick() {
         const auto cache_block =
             to_cache_block(byte_block, settings_.block_size_log2);
 
-        // The op of the original miss matters for WBWA dirty bookkeeping
-        // (write-allocate fills dirty). The Message's kind is DATA — we
-        // don't have the original op here. Conservative choice: 'R'.
-        // The store path will issue a follow-up Op::Write through the
-        // L1 hit path which will set dirty correctly via the standard
-        // hit-write splice.
+        // Recover the original op from pending_stores_: any block whose
+        // miss was caused (in whole or in part) by a STORE fills L1
+        // dirty so insert_new_block sets dirty=true on the new line.
+        // Without this, store misses fill clean, the dirty bit is never
+        // set, and evictions go silent (writebacks=0 even on workloads
+        // that should produce many). L2 stays clean — write-allocate
+        // dirty is L1-only; L2 dirties later when L1 writes back to it.
+        const bool was_store = pending_stores_.erase(byte_block) > 0;
         cache_fill(*l2d_, cache_block, /*rw=*/'R');
-        cache_fill(*l1d_, cache_block, /*rw=*/'R');
+        cache_fill(*l1d_, cache_block, /*rw=*/was_store ? 'W' : 'R');
 
         // Wake every L1 (and L2) MSHR entry that was parked on this
         // block. Phase 5B's L2 has no MSHR yet, but mark_block_ready is
@@ -149,15 +158,24 @@ void CoherenceAdapter::on_ntwk_event(const Message& req) {
             l2d_->coherence_invalidate(cache_block);
             break;
         case MessageKind::RECALL_GOTO_S:
-            // Project3's M->O / E->F / M->S transition: the line stays
-            // resident at this core but is now clean (dirty data was
-            // pushed back via the agent's send_DATA_dir). Phase 5B
-            // doesn't track per-block dirty externally; the cache's
-            // tag_meta dirty flag would need a clear here. For now
-            // we leave the line resident and clean-on-paper — the
-            // next eviction will round-trip through the directory
-            // anyway, so a stale dirty bit only inflates the
-            // memory_writes counter. Tracked under Phase 6 cleanup.
+            // Downgrade-on-remote-read. RECALL_GOTO_S is overloaded
+            // across protocols; the destination state determines
+            // whether this core is still responsible for writeback:
+            //   MSI    M->S        : clean (dir wrote back to memory)
+            //   MESI   M->S, E->S  : clean
+            //   MOSI   M->O, O->O  : owner stays dirty
+            //   MOESIF E->F, F->F  : clean
+            //   MOESIF M->O, O->O  : owner stays dirty
+            // The adapter can't tell clean-dest from owner-dest from
+            // the message alone, so we leave the cache's dirty bit
+            // untouched. Correctness is preserved either way: on a
+            // later clean eviction, on_evict ignores the cache-local
+            // dirty flag and the directory decides memory_writes
+            // from its own state (handle_writeback in directory.cpp),
+            // so a stale dirty bit cannot cause a phantom memory
+            // writeback. The only artifact is the per-cache
+            // stats_.writebacks counter, which over-counts dirty
+            // evictions for MSI/MESI M->S downgrades.
             break;
         default:
             break;

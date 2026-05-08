@@ -20,8 +20,10 @@
 //     RECALL_GOTO_I, drop the line from L1 and L2; on RECALL_GOTO_S,
 //     leave resident but clear the dirty bit.
 
+#include <cstdint>
 #include <deque>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "comparch/cache/cache.hpp"
@@ -77,6 +79,14 @@ private:
     // per tick — drain at most one per cycle from this queue. Owns the
     // pointers (deletes any leftover at destruction).
     std::deque<Message*> outbound_proc_;
+
+    // Byte-block addresses with at least one pending STORE miss. When
+    // the fill response arrives, blocks in this set get filled into L1
+    // with 'W' (write-allocate, dirty=true) instead of 'R'. Without
+    // this, store misses fill clean and the dirty bit never gets set —
+    // evictions go silent and `cache_stats.writebacks` undercounts. See
+    // CoherenceAdapter::tick() for the fill site.
+    std::unordered_set<std::uint64_t> pending_stores_;
 };
 
 } // namespace comparch::coherence

@@ -318,12 +318,16 @@ AccessResult Cache::access(const MemReq& req) {
             ++stats_.misses;
             // Fetch the line from downstream. Even a write-miss issues a
             // Read at the next level (write-allocate fetches the line
-            // before modifying it). Capture the returned latency so the
+            // before modifying it) — but originating_op carries the
+            // top-level op down so the coherence sink can tell that
+            // this fill is owed to a store and the resulting L1 line
+            // should land dirty. Capture the returned latency so the
             // round-trip we report is realistic — pre-Phase-4 we discarded
             // it because --mode cache only counted hits/misses.
             if (cfg_.next_level) {
                 const auto sub = cfg_.next_level->access(
-                    MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc,
+                           /*originating_op=*/req.op});
                 if (sub.latency == kCoherenceSuspendedLatency) {
                     suspended = true;
                 } else {
@@ -336,8 +340,12 @@ AccessResult Cache::access(const MemReq& req) {
                 // Coherence-managed fetch: the sink will message the
                 // directory and call mark_ready when DATA arrives. Skip
                 // local block allocation — the adapter will fill via
-                // insert_new_block once the data is in.
-                cfg_.coherence_sink->on_miss(block_addr, req.op);
+                // insert_new_block once the data is in. Pass
+                // originating_op so an L1 store-miss that surfaces here
+                // (after L1 forwarded as Op::Read for write-allocate)
+                // still tells the adapter the fill is for a write —
+                // the L1 line above should land dirty.
+                cfg_.coherence_sink->on_miss(block_addr, req.originating_op);
                 suspended = true;
             }
             if (!suspended) {
@@ -410,7 +418,11 @@ AccessResult Cache::access(const MemReq& req) {
             downstream_latency = cfg_.main_memory->access(
                 MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
         } else if (cfg_.coherence_sink) {
-            cfg_.coherence_sink->on_miss(block_addr, req.op);
+            // Pass originating_op (the top-level op) so a store-miss
+            // round-trip that surfaces here in L2 still tells the
+            // adapter "this fill is for a write" — the L1 line above
+            // should land dirty.
+            cfg_.coherence_sink->on_miss(block_addr, req.originating_op);
             suspended = true;
         }
         if (!suspended) {

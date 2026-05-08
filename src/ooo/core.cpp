@@ -364,9 +364,12 @@ void OooCore::stage_schedule() {
             // may require a network round-trip. The store completion
             // logic in stage_exec polls the same way as loads.
             cache::MemReq req{};
-            req.addr = oldest->inst.mem_addr;
-            req.op   = u.is_load ? cache::Op::Read : cache::Op::Write;
-            req.pc   = oldest->inst.pc;
+            req.addr           = oldest->inst.mem_addr;
+            req.op             = u.is_load ? cache::Op::Read : cache::Op::Write;
+            req.pc             = oldest->inst.pc;
+            req.originating_op = req.op;     // CPU-level op; carried through
+                                             // L1 -> L2 -> coherence_sink so a
+                                             // store fill marks L1 dirty.
             auto id = l1d_->issue(req);
             if (!id) {
                 // Full() check above should make this unreachable, but

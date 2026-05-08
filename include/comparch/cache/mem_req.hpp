@@ -14,6 +14,14 @@ struct MemReq {
     std::uint64_t addr = 0;
     Op            op   = Op::Read;
     std::uint64_t pc   = 0;
+
+    // The op the topmost cache level was asked to perform. L1 sets this
+    // to its own req.op when forwarding a miss down to L2, so L2 can
+    // tell coherence_sink->on_miss whether the line is destined to be
+    // dirtied (write-miss → fill L1 dirty). Defaults to Read so paths
+    // that never set it (prefetches, write-back traffic) behave as
+    // before.
+    Op            originating_op = Op::Read;
 };
 
 // Synchronous result of a Cache::access() call: was it a hit, and what is
