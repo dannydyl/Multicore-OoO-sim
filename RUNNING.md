@@ -301,21 +301,33 @@ A common experiment: run *different* workloads on different cores to see how
 they interact through the coherence directory. Make a manifest:
 
 ```text
-# traces/mix_4core.txt — one path per line, blank/'#' ignored
-traces/synth/random_small/p0.champsimtrace
-traces/synth/random_small/p1.champsimtrace
-traces/synth/stream_small/p0.champsimtrace
-traces/synth/stream_small/p1.champsimtrace
+# traces/mix_4core.txt — one path per line, blank/'#' ignored.
+# Relative paths are resolved against THIS FILE'S directory (traces/),
+# not your shell's cwd. Absolute paths are also fine.
+synth/random_tiny/p0.champsimtrace
+synth/random_tiny/p1.champsimtrace
+synth/stream_tiny/p0.champsimtrace
+synth/stream_tiny/p1.champsimtrace
 ```
 
-Then:
+Then, from the repo root:
 
 ```sh
 ./build-release/src/sim --config configs/baseline.json \
                         --trace-list traces/mix_4core.txt
 ```
 
-Manifest entry count must equal `cores`.
+or via the wrapper:
+
+```sh
+make run TRACE=traces/mix_4core.txt TAG=mix
+```
+
+Manifest entry count must equal `cores`. The resolution rule
+(`manifest_dir / entry`) is at
+[src/full/full_mode.cpp:147](src/full/full_mode.cpp#L147) — keep it in mind
+if you put the manifest somewhere other than `traces/` or write entries
+relative to the repo root and they fail to open.
 
 ### 6.5 Subsystem modes
 
@@ -379,7 +391,7 @@ report/core_4_mesi_c4_baseline/
 If you set the `LOG=1` environment variable, you also get:
 
 ```
-report/<...>/log.rpt  ← per-instruction commit trace (very large; debug only)
+report/<...>/log.rpt  ← per-instruction commit trace (first 50 dyn instructions per core)
 ```
 
 So:
@@ -388,7 +400,12 @@ So:
 LOG=1 ./build-release/src/sim --config configs/baseline.json --trace-dir traces/core_4
 ```
 
-writes a `log.rpt` alongside the other reports.
+writes a `log.rpt` alongside the other reports. The file format (LSU
+issue events, RETIRE events, branch metadata) is documented in
+[docs/log-format.md](docs/log-format.md), and a header block at the top
+of `log.rpt` itself summarizes the same. Note `LOG=1` is an env var, not
+a CLI flag; `--log-level` only affects what prints to stderr and is
+unrelated to `log.rpt`.
 
 ### 7.2 The source of those file names
 

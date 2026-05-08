@@ -82,10 +82,11 @@ with `--trace-list`:
 
 ```text
 # traces/heterogeneous_4core.txt
-traces/synth/loop_tiny/p0.champsimtrace
-traces/synth/loop_tiny/p0.champsimtrace      ← intentional repeat: cores 0 and 1 share
-traces/synth/random_tiny/p0.champsimtrace
-traces/synth/sequential_tiny/p0.champsimtrace
+# Relative paths resolve against this file's directory (traces/), not cwd.
+synth/loop_tiny/p0.champsimtrace
+synth/loop_tiny/p0.champsimtrace             ← intentional repeat: cores 0 and 1 share
+synth/random_tiny/p0.champsimtrace
+synth/sequential_tiny/p0.champsimtrace
 ```
 
 ```sh
