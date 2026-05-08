@@ -38,8 +38,11 @@
 #include "comparch/coherence/settings.hpp"
 #include "comparch/log.hpp"
 #include "comparch/ooo/core.hpp"
+#include "comparch/ooo/trace_logger.hpp"
 #include "comparch/predictor/predictor.hpp"
 #include "comparch/trace.hpp"
+
+#include <cstdlib>   // getenv
 
 namespace fs = std::filesystem;
 
@@ -75,6 +78,7 @@ ooo::OooConfig to_ooo_config(const SimConfig& cfg) {
     occ.fetch_width           = static_cast<std::size_t>(cfg.core.fetch_width);
     occ.rob_entries           = static_cast<std::size_t>(cfg.core.rob_entries);
     occ.schedq_entries_per_fu = static_cast<std::size_t>(cfg.core.schedq_entries_per_fu);
+    occ.dispq_capacity        = static_cast<std::size_t>(cfg.core.dispq_capacity);
     occ.alu_fus               = static_cast<std::size_t>(cfg.core.alu_fus);
     occ.mul_fus               = static_cast<std::size_t>(cfg.core.mul_fus);
     occ.lsu_fus               = static_cast<std::size_t>(cfg.core.lsu_fus);
@@ -95,6 +99,71 @@ coherence::Settings to_settings(const SimConfig& cfg) {
     s.link_width_log2 = static_cast<std::size_t>(cfg.interconnect.link_width_log2);
     coherence::finalize_settings(s);
     return s;
+}
+
+// Trim ASCII whitespace from both ends.
+std::string trim(std::string s) {
+    auto is_ws = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!s.empty() && is_ws(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+    while (!s.empty() && is_ws(static_cast<unsigned char>(s.back())))  s.pop_back();
+    return s;
+}
+
+// Resolve per-core trace paths from CLI input. Two input modes:
+//   --trace-dir DIR : <DIR>/p<i>.champsimtrace, i in [0, cores).
+//   --trace-list F  : one path per line; blank/'#' lines skipped; relative
+//                     paths resolved against F's parent directory; entry
+//                     count must equal cores.
+// Caller has already verified exactly one of the two is set.
+std::vector<fs::path> resolve_per_core_traces(const CliArgs& cli, int cores) {
+    std::vector<fs::path> paths;
+    paths.reserve(cores);
+
+    if (cli.trace_dir) {
+        for (int i = 0; i < cores; ++i) {
+            const auto p = *cli.trace_dir /
+                           ("p" + std::to_string(i) + ".champsimtrace");
+            if (!fs::exists(p)) {
+                throw trace::TraceError("missing per-core trace: " + p.string());
+            }
+            paths.push_back(p);
+        }
+        return paths;
+    }
+
+    const auto& manifest = *cli.trace_list;
+    const auto manifest_dir = manifest.parent_path();
+    std::ifstream in(manifest);
+    if (!in) {
+        throw trace::TraceError("could not open --trace-list file: " +
+                                manifest.string());
+    }
+    std::string line;
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.empty() || line.front() == '#') continue;
+        fs::path p = line;
+        if (p.is_relative()) p = manifest_dir / p;
+        if (!fs::exists(p)) {
+            throw trace::TraceError("missing trace from --trace-list: " +
+                                    p.string());
+        }
+        paths.push_back(std::move(p));
+    }
+    if (static_cast<int>(paths.size()) != cores) {
+        throw trace::TraceError(
+            "--trace-list has " + std::to_string(paths.size()) +
+            " entries but cores=" + std::to_string(cores));
+    }
+    return paths;
+}
+
+// Human-readable label for whichever trace input the user supplied.
+// Used in the report header and the run-directory name.
+std::string trace_label(const CliArgs& cli) {
+    if (cli.trace_dir)  return cli.trace_dir->string();
+    if (cli.trace_list) return cli.trace_list->string();
+    return {};
 }
 
 // Reporter -------------------------------------------------------------
@@ -123,15 +192,47 @@ struct ReportContext {
 // for either configuration; `accesses` is universal (incremented on every
 // access() entry regardless of policy).
 struct CoreMetrics {
+    // Cache totals (WBWA + WTWNA reconciled).
     std::uint64_t l1_hits, l1_misses;
     std::uint64_t l2_accesses, l2_hits, l2_misses;
-    double        l1_miss_rate;
-    double        l2_miss_rate;
+
+    // Cache rates.
+    double        l1_miss_rate;     // L1 misses / L1 accesses
+    double        l1_hit_rate;      // L1 hits   / L1 accesses
+    double        l2_miss_rate;     // local: L2 misses / L2 accesses
+    double        l2_hit_rate;      // 1 - l2_miss_rate
+    double        l2_global_miss;   // L2 misses / L1 accesses (global miss rate)
+
+    // Average Memory Access Time (Hennessy & Patterson Ch. 2).
+    //   AMAT_L2 = hit_lat_L2 + miss_rate_L2 * mem_lat
+    //   AMAT_L1 = hit_lat_L1 + miss_rate_L1 * AMAT_L2
     double        l1_aat;
     double        l2_aat;
+
+    // Pipeline throughput.
     double        ipc;
     double        cpi;
-    double        mpki;
+
+    // Branch metrics.
+    double        branch_accuracy;          // (br - mispred) / br
+    double        branch_mispred_rate;      // mispred / br
+    double        mpki;                     // mispred * 1000 / retired
+    double        branches_per_kinst;       // br * 1000 / retired
+
+    // Cache pressure (per-kilo-instruction). APKI = accesses-per-kilo-inst.
+    double        l1_apki;
+    double        l1_mpki;                  // L1 misses * 1000 / retired
+    double        l2_mpki;                  // L2 misses * 1000 / retired
+
+    // Pipeline-resource occupancy. Average / max sizes are reported by
+    // OooStats; the percentages below normalize against capacity.
+    double        rob_occupancy_pct;
+    double        schedq_occupancy_pct;
+    double        dispq_occupancy_pct;
+
+    // Stall fractions.
+    double        no_fire_pct;              // cycles with 0 issues
+    double        rob_full_pct;             // dispatch-blocked-by-rob cycles
 };
 
 CoreMetrics compute_metrics(const ooo::OooStats& s,
@@ -147,8 +248,13 @@ CoreMetrics compute_metrics(const ooo::OooStats& s,
     m.l1_miss_rate = l1s.accesses
         ? static_cast<double>(m.l1_misses) / static_cast<double>(l1s.accesses)
         : 0.0;
+    m.l1_hit_rate = 1.0 - m.l1_miss_rate;
     m.l2_miss_rate = m.l2_accesses
         ? static_cast<double>(m.l2_misses) / static_cast<double>(m.l2_accesses)
+        : 0.0;
+    m.l2_hit_rate = 1.0 - m.l2_miss_rate;
+    m.l2_global_miss = l1s.accesses
+        ? static_cast<double>(m.l2_misses) / static_cast<double>(l1s.accesses)
         : 0.0;
     m.l2_aat = static_cast<double>(cfg.l2.hit_latency) +
                m.l2_miss_rate * static_cast<double>(cfg.memory.latency);
@@ -163,6 +269,47 @@ CoreMetrics compute_metrics(const ooo::OooStats& s,
     m.mpki = s.instructions_retired
         ? 1000.0 * static_cast<double>(s.branch_mispredictions) /
                    static_cast<double>(s.instructions_retired)
+        : 0.0;
+    m.branches_per_kinst = s.instructions_retired
+        ? 1000.0 * static_cast<double>(s.num_branch_instructions) /
+                   static_cast<double>(s.instructions_retired)
+        : 0.0;
+    m.branch_accuracy = s.num_branch_instructions
+        ? static_cast<double>(s.num_branch_instructions - s.branch_mispredictions) /
+          static_cast<double>(s.num_branch_instructions)
+        : 0.0;
+    m.branch_mispred_rate = s.num_branch_instructions
+        ? static_cast<double>(s.branch_mispredictions) /
+          static_cast<double>(s.num_branch_instructions)
+        : 0.0;
+    m.l1_apki = s.instructions_retired
+        ? 1000.0 * static_cast<double>(l1s.accesses) /
+                   static_cast<double>(s.instructions_retired)
+        : 0.0;
+    m.l1_mpki = s.instructions_retired
+        ? 1000.0 * static_cast<double>(m.l1_misses) /
+                   static_cast<double>(s.instructions_retired)
+        : 0.0;
+    m.l2_mpki = s.instructions_retired
+        ? 1000.0 * static_cast<double>(m.l2_misses) /
+                   static_cast<double>(s.instructions_retired)
+        : 0.0;
+    // Resource occupancy. The OoO config knows the capacities.
+    const double rob_cap    = static_cast<double>(cfg.core.rob_entries);
+    const double schedq_cap = static_cast<double>(
+        cfg.core.schedq_entries_per_fu *
+        (cfg.core.alu_fus + cfg.core.mul_fus + cfg.core.lsu_fus));
+    const double dispq_cap  = static_cast<double>(cfg.core.dispq_capacity);
+    m.rob_occupancy_pct    = rob_cap    > 0 ? 100.0 * s.rob_avg()    / rob_cap    : 0.0;
+    m.schedq_occupancy_pct = schedq_cap > 0 ? 100.0 * s.schedq_avg() / schedq_cap : 0.0;
+    m.dispq_occupancy_pct  = dispq_cap  > 0 ? 100.0 * s.dispq_avg()  / dispq_cap  : 0.0;
+    m.no_fire_pct = s.cycles
+        ? 100.0 * static_cast<double>(s.no_fire_cycles) /
+                  static_cast<double>(s.cycles)
+        : 0.0;
+    m.rob_full_pct = s.cycles
+        ? 100.0 * static_cast<double>(s.rob_no_dispatch_cycles) /
+                  static_cast<double>(s.cycles)
         : 0.0;
     return m;
 }
@@ -211,7 +358,7 @@ void write_separator(std::ostream& os, char fill, const char* title = nullptr) {
 
 void write_header(std::ostream& os, const ReportContext& ctx) {
     write_separator(os, '=', "Multicore OoO Simulator -- Run Report");
-    kv(os, "", "Trace",        ctx.cli.trace_dir->string());
+    kv(os, "", "Trace",        trace_label(ctx.cli));
     kv(os, "", "Cores",        str(ctx.cfg.cores));
     kv(os, "", "Protocol",     ctx.proto_label);
     kv(os, "", "Status",       ctx.completed ? "Simulation complete"
@@ -275,8 +422,69 @@ void write_config(std::ostream& os, const ReportContext& ctx) {
     os << '\n';
 }
 
-void write_per_core(std::ostream& os, const ReportContext& ctx) {
-    write_separator(os, '=', "Per-core results");
+// Concise per-core overview for report.rpt — one block per core, ~6
+// lines each, matching the columns in report.csv.
+void write_overview_per_core(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '-', "Per-core summary");
+    for (std::size_t i = 0; i < ctx.stacks.size(); ++i) {
+        const auto& s   = ctx.stacks[i]->core->stats();
+        const auto& l1s = ctx.stacks[i]->l1->stats();
+        const auto& l2s = ctx.stacks[i]->l2->stats();
+        const auto m    = compute_metrics(s, l1s, l2s, ctx.cfg);
+
+        os << "[ Core " << i << " ]\n";
+        kv(os, "  ", "cycles",                str(s.cycles));
+        kv(os, "  ", "instructions retired",  str(s.instructions_retired));
+        kv(os, "  ", "IPC / CPI",             fix(m.ipc, 3) + " / " + fix(m.cpi, 3));
+        kv(os, "  ", "L1 miss rate",   fix(m.l1_miss_rate, 4) +
+                                       " (" + str(m.l1_misses) + "/" +
+                                       str(l1s.accesses) + ")");
+        kv(os, "  ", "L2 miss rate",   fix(m.l2_miss_rate, 4) +
+                                       " (" + str(m.l2_misses) + "/" +
+                                       str(m.l2_accesses) + ")");
+        kv(os, "  ", "branch MPKI",    fix(m.mpki, 2));
+        if (i + 1 < ctx.stacks.size()) os << '\n';
+    }
+    os << '\n';
+}
+
+// Aggregate banner for report.rpt: total cycles, total retired, average
+// IPC across cores. Same numbers a sweeper plotter would use.
+void write_aggregate(std::ostream& os, const ReportContext& ctx) {
+    std::uint64_t total_retired = 0;
+    std::uint64_t total_cycles  = 0;
+    double        ipc_sum       = 0.0;
+    std::uint64_t total_l1_acc  = 0;
+    std::uint64_t total_l1_miss = 0;
+    for (auto& cs : ctx.stacks) {
+        const auto& s   = cs->core->stats();
+        const auto& l1s = cs->l1->stats();
+        total_retired += s.instructions_retired;
+        total_cycles   = std::max(total_cycles, s.cycles);
+        ipc_sum       += s.ipc();
+        total_l1_acc  += l1s.accesses;
+        total_l1_miss += l1s.misses + l1s.read_misses;
+    }
+    const double aggregate_ipc = static_cast<double>(total_retired) /
+        static_cast<double>(std::max<std::uint64_t>(1, total_cycles));
+    const double l1_miss_rate = total_l1_acc
+        ? static_cast<double>(total_l1_miss) / static_cast<double>(total_l1_acc)
+        : 0.0;
+
+    write_separator(os, '-', "System aggregate");
+    kv(os, "", "Total instr retired",   str(total_retired));
+    kv(os, "", "Aggregate IPC",         fix(aggregate_ipc, 3));
+    kv(os, "", "Per-core IPC (mean)",
+       fix(ipc_sum / static_cast<double>(ctx.stacks.size()), 3));
+    kv(os, "", "L1 system miss rate",   fix(l1_miss_rate, 4));
+    os << '\n';
+}
+
+// Detailed per-core stats for stats.rpt. This is where most of the
+// industry-style numbers live: AMAT, MPKI, branch accuracy, occupancy
+// percentages, stall fractions, prefetcher accounting, etc.
+void write_detailed_per_core(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '=', "Per-core detailed statistics");
 
     for (std::size_t i = 0; i < ctx.stacks.size(); ++i) {
         const auto& s   = ctx.stacks[i]->core->stats();
@@ -285,50 +493,177 @@ void write_per_core(std::ostream& os, const ReportContext& ctx) {
         const auto m    = compute_metrics(s, l1s, l2s, ctx.cfg);
 
         os << "[ Core " << i << " ]\n";
-        os << "  Pipeline\n";
+
+        os << "  Pipeline throughput\n";
         kv(os, "    ", "cycles",                str(s.cycles));
-        kv(os, "    ", "instructions retired",  str(s.instructions_retired));
         kv(os, "    ", "instructions fetched",  str(s.instructions_fetched));
-        kv(os, "    ", "IPC",                   fix(m.ipc, 3));
-        kv(os, "    ", "CPI",                   fix(m.cpi, 3));
-        kv(os, "    ", "branch mispredictions", str(s.branch_mispredictions));
-        kv(os, "    ", "MPKI",                  fix(m.mpki, 2));
+        kv(os, "    ", "instructions retired",  str(s.instructions_retired));
+        kv(os, "    ", "IPC",                   fix(m.ipc, 4));
+        kv(os, "    ", "CPI",                   fix(m.cpi, 4));
+        kv(os, "    ", "deadlock state",
+           s.deadlocked ? ("DEADLOCKED@" + str(s.stall_cycles_at_abort))
+                        : std::string("clean"));
 
-        os << "  L1 cache\n";
-        kv(os, "    ", "accesses",  str(l1s.accesses));
-        kv(os, "    ", "hits",      str(m.l1_hits));
-        kv(os, "    ", "misses",    str(m.l1_misses));
-        kv(os, "    ", "miss rate", fix(m.l1_miss_rate, 3));
-        kv(os, "    ", "AAT",       fix(m.l1_aat, 2) + " cycles");
+        os << "  Branch predictor\n";
+        kv(os, "    ", "branches",              str(s.num_branch_instructions));
+        kv(os, "    ", "mispredictions",        str(s.branch_mispredictions));
+        kv(os, "    ", "branch accuracy",       fix(100.0 * m.branch_accuracy, 2) + " %");
+        kv(os, "    ", "mispredict rate",       fix(100.0 * m.branch_mispred_rate, 2) + " %");
+        kv(os, "    ", "branches/kinst",        fix(m.branches_per_kinst, 2));
+        kv(os, "    ", "MPKI (mispred)",        fix(m.mpki, 2));
 
-        os << "  L2 cache\n";
-        kv(os, "    ", "accesses",  str(m.l2_accesses));
-        kv(os, "    ", "hits",      str(m.l2_hits));
-        kv(os, "    ", "misses",    str(m.l2_misses));
-        kv(os, "    ", "miss rate", fix(m.l2_miss_rate, 3));
-        kv(os, "    ", "AAT",       fix(m.l2_aat, 2) + " cycles");
+        os << "  L1 cache (" << ctx.cfg.l1.size_kb << " KB / "
+           << ctx.cfg.l1.assoc << "-way / " << ctx.cfg.l1.write_policy << ")\n";
+        kv(os, "    ", "accesses",              str(l1s.accesses));
+        kv(os, "    ", "reads / writes",
+           str(l1s.reads) + " / " + str(l1s.writes));
+        kv(os, "    ", "hits",                  str(m.l1_hits));
+        kv(os, "    ", "misses",                str(m.l1_misses));
+        kv(os, "    ", "hit rate",              fix(100.0 * m.l1_hit_rate, 3) + " %");
+        kv(os, "    ", "miss rate",             fix(100.0 * m.l1_miss_rate, 3) + " %");
+        kv(os, "    ", "APKI",                  fix(m.l1_apki, 2));
+        kv(os, "    ", "MPKI",                  fix(m.l1_mpki, 2));
+        kv(os, "    ", "AMAT",                  fix(m.l1_aat, 2) + " cycles");
+        kv(os, "    ", "writebacks",            str(l1s.writebacks));
+        kv(os, "    ", "coherence invals",      str(l1s.coherence_invals));
+        if (l1s.prefetches_issued != 0) {
+            kv(os, "    ", "prefetches issued",  str(l1s.prefetches_issued));
+            kv(os, "    ", "prefetch hits",      str(l1s.prefetch_hits));
+            kv(os, "    ", "prefetch misses",    str(l1s.prefetch_misses));
+        }
+
+        os << "  L2 cache (" << ctx.cfg.l2.size_kb << " KB / "
+           << ctx.cfg.l2.assoc << "-way / " << ctx.cfg.l2.write_policy << ")\n";
+        kv(os, "    ", "accesses",              str(m.l2_accesses));
+        kv(os, "    ", "hits",                  str(m.l2_hits));
+        kv(os, "    ", "misses",                str(m.l2_misses));
+        kv(os, "    ", "local hit rate",        fix(100.0 * m.l2_hit_rate, 3) + " %");
+        kv(os, "    ", "local miss rate",       fix(100.0 * m.l2_miss_rate, 3) + " %");
+        kv(os, "    ", "global miss rate",      fix(100.0 * m.l2_global_miss, 3) + " %  (vs L1 accesses)");
+        kv(os, "    ", "MPKI",                  fix(m.l2_mpki, 2));
+        kv(os, "    ", "AMAT",                  fix(m.l2_aat, 2) + " cycles");
+        kv(os, "    ", "writebacks",            str(l2s.writebacks));
+        kv(os, "    ", "coherence invals",      str(l2s.coherence_invals));
+        if (l2s.prefetches_issued != 0) {
+            kv(os, "    ", "prefetches issued",  str(l2s.prefetches_issued));
+            kv(os, "    ", "prefetch hits",      str(l2s.prefetch_hits));
+            kv(os, "    ", "prefetch misses",    str(l2s.prefetch_misses));
+        }
+
+        os << "  Pipeline resources (avg / max / capacity / occupancy %)\n";
+        kv(os, "    ", "ROB",
+           fix(s.rob_avg(), 1) + " / " + str(s.rob_max) + " / " +
+           str(ctx.cfg.core.rob_entries) + " / " +
+           fix(m.rob_occupancy_pct, 1) + " %");
+        const std::size_t schedq_cap = ctx.cfg.core.schedq_entries_per_fu *
+            (ctx.cfg.core.alu_fus + ctx.cfg.core.mul_fus + ctx.cfg.core.lsu_fus);
+        kv(os, "    ", "SchedQ",
+           fix(s.schedq_avg(), 1) + " / " + str(s.schedq_max) + " / " +
+           str(schedq_cap) + " / " +
+           fix(m.schedq_occupancy_pct, 1) + " %");
+        kv(os, "    ", "DispQ",
+           fix(s.dispq_avg(), 1) + " / " + str(s.dispq_max) + " / " +
+           str(ctx.cfg.core.dispq_capacity) + " / " +
+           fix(m.dispq_occupancy_pct, 1) + " %");
+
+        os << "  Stall accounting\n";
+        kv(os, "    ", "no-fire cycles",
+           str(s.no_fire_cycles) + " (" + fix(m.no_fire_pct, 2) + " %)");
+        kv(os, "    ", "ROB-full dispatch stalls",
+           str(s.rob_no_dispatch_cycles) + " (" + fix(m.rob_full_pct, 2) + " %)");
 
         if (i + 1 < ctx.stacks.size()) os << '\n';
     }
     os << '\n';
+
+    os << "AMAT formula (Hennessy & Patterson Ch. 2):\n"
+       << "    AMAT_L2 = hit_lat_L2 + miss_rate_L2 * mem_lat\n"
+       << "    AMAT_L1 = hit_lat_L1 + miss_rate_L1 * AMAT_L2\n"
+       << "  with hit_lat_L1 = " << ctx.cfg.l1.hit_latency
+       << ", hit_lat_L2 = " << ctx.cfg.l2.hit_latency
+       << ", mem_lat = " << ctx.cfg.memory.latency << " cycles.\n";
 }
 
-void write_system(std::ostream& os, const ReportContext& ctx) {
-    write_separator(os, '=', "System-wide (coherence + memory)");
+// Coherence / off-chip section, broken out to its own file so config
+// sweeps that vary protocol can diff coherence.rpt without churning
+// the rest. Numbers come from the system-wide CoherenceStats counter
+// pack — there is no per-core split today.
+void write_coherence(std::ostream& os, const ReportContext& ctx) {
     const auto& cs = ctx.cs;
-    kv(os, "", "Cache accesses",            str(cs.cache_accesses));
-    kv(os, "", "Cache misses",              str(cs.cache_misses));
+    write_separator(os, '=', "Coherence + memory");
+    kv(os, "", "Protocol",                  ctx.proto_label);
+    kv(os, "", "Cache accesses (system)",   str(cs.cache_accesses));
+    kv(os, "", "Cache misses (system)",     str(cs.cache_misses));
     kv(os, "", "Silent upgrades",           str(cs.silent_upgrades));
     kv(os, "", "Cache-to-cache transfers",  str(cs.c2c_transfers));
     kv(os, "", "Memory reads",              str(cs.memory_reads));
     kv(os, "", "Memory writes",             str(cs.memory_writes));
+
+    // Derived ratios. Useful for comparing protocols at a glance:
+    //   c2c_share  = how many misses were satisfied by a peer cache
+    //                (intervention) vs. memory.
+    //   wb_per_inv = how often invalidations turn into actual dirty
+    //                evictions; tells you how chatty a write-heavy
+    //                workload is on this protocol.
+    if (cs.cache_misses != 0) {
+        const double c2c_share = static_cast<double>(cs.c2c_transfers) /
+                                 static_cast<double>(cs.cache_misses);
+        kv(os, "", "C2C / miss",            fix(c2c_share, 4));
+    }
+    if (cs.cache_accesses != 0) {
+        const double system_miss_rate = static_cast<double>(cs.cache_misses) /
+                                        static_cast<double>(cs.cache_accesses);
+        kv(os, "", "System miss rate",      fix(100.0 * system_miss_rate, 3) + " %");
+    }
+
+    // System-wide invalidation count (sum across L1+L2 of every core).
+    std::uint64_t invs_total = 0;
+    for (auto& cs2 : ctx.stacks) {
+        invs_total += cs2->l1->stats().coherence_invals;
+        invs_total += cs2->l2->stats().coherence_invals;
+    }
+    kv(os, "", "Coherence invalidations",   str(invs_total));
 }
 
-void write_rpt(std::ostream& os, const ReportContext& ctx) {
+// stdout / report.rpt — the concise overview the user reads first.
+void write_overview(std::ostream& os, const ReportContext& ctx) {
     write_header(os, ctx);
+    write_aggregate(os, ctx);
+    write_overview_per_core(os, ctx);
+}
+
+// stats.rpt — full pipeline + cache + branch breakdown.
+void write_stats(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '=', "Multicore OoO Simulator -- Detailed Stats");
+    kv(os, "", "Trace",        trace_label(ctx.cli));
+    kv(os, "", "Cores",        str(ctx.cfg.cores));
+    kv(os, "", "Protocol",     ctx.proto_label);
+    kv(os, "", "Total cycles", str(ctx.clock));
+    if (ctx.cli.tag) kv(os, "", "Tag", *ctx.cli.tag);
+    os << '\n';
+    write_detailed_per_core(os, ctx);
+}
+
+// config.rpt — pure config dump. No simulation numbers.
+void write_config_only(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '=', "Multicore OoO Simulator -- Configuration");
+    kv(os, "", "Trace",        trace_label(ctx.cli));
+    kv(os, "", "Cores",        str(ctx.cfg.cores));
+    kv(os, "", "Protocol",     ctx.proto_label);
+    if (ctx.cli.tag) kv(os, "", "Tag", *ctx.cli.tag);
+    os << '\n';
     write_config(os, ctx);
-    write_per_core(os, ctx);
-    write_system(os, ctx);
+}
+
+// coherence.rpt — protocol counters + derived ratios.
+void write_coherence_file(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '=', "Multicore OoO Simulator -- Coherence");
+    kv(os, "", "Trace",        trace_label(ctx.cli));
+    kv(os, "", "Cores",        str(ctx.cfg.cores));
+    kv(os, "", "Total cycles", str(ctx.clock));
+    if (ctx.cli.tag) kv(os, "", "Tag", *ctx.cli.tag);
+    os << '\n';
+    write_coherence(os, ctx);
 }
 
 void write_csv(std::ostream& os, const ReportContext& ctx) {
@@ -364,14 +699,29 @@ void write_csv(std::ostream& os, const ReportContext& ctx) {
     }
 }
 
-fs::path build_run_dir(const ReportContext& ctx) {
-    std::string name = ctx.cli.trace_dir->filename().string() + "_" +
-                       proto_short(ctx.proto_label) + "_c" +
-                       str(ctx.cfg.cores);
-    if (ctx.cli.tag && !ctx.cli.tag->empty()) {
-        name += "_" + *ctx.cli.tag;
-    }
+// Pre-simulation path resolver — used to open log.rpt before tick()
+// runs. Doesn't need a ReportContext; that doesn't exist yet at this
+// point in the driver.
+fs::path build_run_dir_pre(const SimConfig& cfg, const CliArgs& cli,
+                           const std::string& proto_label) {
+    std::string stem;
+    if (cli.trace_dir)       stem = cli.trace_dir->filename().string();
+    else if (cli.trace_list) stem = cli.trace_list->stem().string();
+    std::string name = stem + "_" + proto_short(proto_label) + "_c" +
+                       str(cfg.cores);
+    if (cli.tag && !cli.tag->empty()) name += "_" + *cli.tag;
     return fs::path("report") / name;
+}
+
+// LOG=1 / LOG=true / LOG=on / non-empty → enable per-instruction trace.
+// Anything else (including unset) is off. The check is intentionally
+// permissive so users don't have to remember an exact value.
+bool log_trace_enabled() {
+    const char* v = std::getenv("LOG");
+    if (v == nullptr || *v == '\0') return false;
+    const std::string s(v);
+    if (s == "0" || s == "off" || s == "false" || s == "no") return false;
+    return true;
 }
 
 } // namespace
@@ -379,11 +729,11 @@ fs::path build_run_dir(const ReportContext& ctx) {
 int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
     if (cli.trace) {
         LOG_ERROR("default mode is per-core; pass --trace-dir DIR (with "
-                  "p<i>.champsimtrace files), not --trace");
+                  "p<i>.champsimtrace files) or --trace-list FILE, not --trace");
         return 1;
     }
-    if (!cli.trace_dir) {
-        LOG_ERROR("default mode requires --trace-dir DIR");
+    if (!cli.trace_dir && !cli.trace_list) {
+        LOG_ERROR("default mode requires --trace-dir DIR or --trace-list FILE");
         return 1;
     }
     if (cfg.interconnect.topology != "ring") {
@@ -396,19 +746,43 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
         return 2;
     }
 
-    std::vector<fs::path> trace_paths;
-    trace_paths.reserve(cfg.cores);
-    for (int i = 0; i < cfg.cores; ++i) {
-        const auto p = *cli.trace_dir /
-                       ("p" + std::to_string(i) + ".champsimtrace");
-        if (!fs::exists(p)) {
-            throw trace::TraceError("missing per-core trace: " + p.string());
-        }
-        trace_paths.push_back(p);
-    }
+    const auto trace_paths = resolve_per_core_traces(cli, cfg.cores);
 
     const auto settings = to_settings(cfg);
     coherence::CoherenceStats stats;
+
+    // Resolve the run output directory up front so log.rpt (when LOG=1
+    // is set) can be opened before any cycles tick. Dir creation
+    // failures are non-fatal — we log a warning and skip per-file
+    // outputs at the end, matching the existing behavior.
+    const std::string proto_label_str = coherence::protocol_label(settings.protocol);
+    const fs::path run_dir_pre = build_run_dir_pre(cfg, cli, proto_label_str);
+    {
+        std::error_code ec;
+        fs::create_directories(run_dir_pre, ec);
+        if (ec) {
+            LOG_WARN("could not create " << run_dir_pre << ": "
+                     << ec.message() << "; per-file reports may be skipped");
+        }
+    }
+
+    // Optional execution-trace log. The TraceLogger holds a reference
+    // to the ofstream, so the stream has to outlive the simulation.
+    const bool log_on = log_trace_enabled();
+    std::ofstream log_stream;
+    std::unique_ptr<ooo::TraceLogger> trace_logger;
+    if (log_on) {
+        log_stream.open(run_dir_pre / "log.rpt");
+        if (!log_stream) {
+            LOG_WARN("LOG=1 set but could not open " << (run_dir_pre / "log.rpt")
+                     << "; trace logging disabled");
+        } else {
+            trace_logger = std::make_unique<ooo::TraceLogger>(
+                log_stream, static_cast<std::size_t>(cfg.cores));
+            trace_logger->write_header(trace_label(cli), proto_label_str);
+            LOG_INFO("LOG=1: per-instruction trace -> " << (run_dir_pre / "log.rpt"));
+        }
+    }
 
     std::vector<std::unique_ptr<CoreStack>> stack_owners;
     stack_owners.reserve(cfg.cores);
@@ -442,6 +816,9 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
             trace_paths[i], trace::Variant::Standard);
         cs->core = std::make_unique<ooo::OooCore>(
             to_ooo_config(cfg), *cs->pred, *cs->l1, *cs->reader);
+        if (trace_logger) {
+            cs->core->set_trace_logger(trace_logger.get(), i);
+        }
 
         stack_owners.push_back(std::move(cs));
     }
@@ -480,32 +857,30 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
     }
 
     ReportContext ctx{
-        cfg, cli, stats, stack_owners, clock, completed,
-        coherence::protocol_label(settings.protocol)};
+        cfg, cli, stats, stack_owners, clock, completed, proto_label_str};
 
-    write_rpt(std::cout, ctx);
+    // stdout: short overview only. Detailed numbers live in the per-
+    // file reports under run_dir_pre. Helps a sweeper grep summary
+    // lines without scrolling through a 200-line dump per run.
+    write_overview(std::cout, ctx);
 
-    const fs::path run_dir = build_run_dir(ctx);
-    std::error_code ec;
-    fs::create_directories(run_dir, ec);
-    if (ec) {
-        LOG_WARN("could not create " << run_dir << ": " << ec.message()
-                 << "; skipping report files");
-    } else {
-        if (std::ofstream rpt(run_dir / "report.rpt"); rpt) {
-            write_rpt(rpt, ctx);
+    // Write each report to its own file. Each file is self-contained
+    // (header + section); sweep tooling that diffs config.rpt can
+    // ignore the noisy stats.rpt.
+    auto write_to = [&](const char* fname, auto&& fn) {
+        const fs::path p = run_dir_pre / fname;
+        if (std::ofstream out(p); out) {
+            fn(out);
         } else {
-            LOG_WARN("could not open " << (run_dir / "report.rpt")
-                     << " for writing");
+            LOG_WARN("could not open " << p << " for writing");
         }
-        if (std::ofstream csv(run_dir / "report.csv"); csv) {
-            write_csv(csv, ctx);
-        } else {
-            LOG_WARN("could not open " << (run_dir / "report.csv")
-                     << " for writing");
-        }
-        LOG_INFO("wrote report to " << run_dir);
-    }
+    };
+    write_to("report.rpt",    [&](std::ostream& o){ write_overview(o, ctx); });
+    write_to("config.rpt",    [&](std::ostream& o){ write_config_only(o, ctx); });
+    write_to("stats.rpt",     [&](std::ostream& o){ write_stats(o, ctx); });
+    write_to("coherence.rpt", [&](std::ostream& o){ write_coherence_file(o, ctx); });
+    write_to("report.csv",    [&](std::ostream& o){ write_csv(o, ctx); });
+    LOG_INFO("wrote reports to " << run_dir_pre);
 
     return completed ? 0 : 5;
 }

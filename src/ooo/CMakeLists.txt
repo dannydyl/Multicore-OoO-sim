@@ -5,6 +5,7 @@ add_library(casim_ooo STATIC
     schedq.cpp
     core.cpp
     ooo_mode.cpp
+    trace_logger.cpp
 )
 
 target_include_directories(casim_ooo

@@ -37,10 +37,13 @@
 
 namespace comparch::ooo {
 
+class TraceLogger;
+
 struct OooConfig {
     std::size_t fetch_width             = 4;
     std::size_t rob_entries             = 96;
     std::size_t schedq_entries_per_fu   = 2;
+    std::size_t dispq_capacity          = 32;
     std::size_t alu_fus                 = 3;
     std::size_t mul_fus                 = 2;
     std::size_t lsu_fus                 = 2;
@@ -95,6 +98,14 @@ public:
 
     const OooStats& stats() const { return stats_; }
 
+    // LOG=1 wiring. Default is no logger; full_mode attaches one
+    // when LOG is enabled. core_id is used only as a label in the
+    // output; the core itself doesn't otherwise need to know its ID.
+    void set_trace_logger(TraceLogger* logger, int core_id) {
+        trace_logger_ = logger;
+        core_id_      = core_id;
+    }
+
     // Test introspection.
     std::size_t dispq_size() const { return dispq_.size(); }
     std::size_t schedq_size() const { return sq_.size(); }
@@ -148,6 +159,11 @@ private:
     std::uint64_t stall_cycles_            = 0;
 
     OooStats stats_;
+
+    // LOG=1 hooks. Both default to "off"; full_mode wires them up
+    // post-construction via set_trace_logger().
+    TraceLogger* trace_logger_ = nullptr;
+    int          core_id_      = 0;
 };
 
 } // namespace comparch::ooo

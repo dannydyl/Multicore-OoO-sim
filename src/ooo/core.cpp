@@ -17,6 +17,7 @@
 #include "comparch/cache/mem_req.hpp"
 #include "comparch/cache/mshr.hpp"
 #include "comparch/log.hpp"
+#include "comparch/ooo/trace_logger.hpp"
 
 namespace comparch::ooo {
 
@@ -145,6 +146,14 @@ std::uint64_t OooCore::stage_state_update(bool& mispred_retired_out) {
                 rat_.flush_to_ready();
                 mispred_retired_out = true;
                 in_mispred_ = false;          // un-block fetch next cycle
+                if (trace_logger_) {
+                    trace_logger_->on_retire(
+                        core_id_, stats_.cycles, head.inst.dyn_count,
+                        head.inst.pc, opcode_name(head.inst.opcode),
+                        head.inst.mem_addr, /*is_branch=*/true,
+                        head.inst.branch_taken, head.inst.predicted_taken,
+                        /*mispredict=*/true);
+                }
                 rob_.retire_head();
                 ++retired;
                 ++stats_.instructions_retired;
@@ -152,6 +161,15 @@ std::uint64_t OooCore::stage_state_update(bool& mispred_retired_out) {
             }
         }
 
+        if (trace_logger_) {
+            trace_logger_->on_retire(
+                core_id_, stats_.cycles, head.inst.dyn_count,
+                head.inst.pc, opcode_name(head.inst.opcode),
+                head.inst.mem_addr,
+                head.inst.opcode == Opcode::Branch,
+                head.inst.branch_taken, head.inst.predicted_taken,
+                /*mispredict=*/false);
+        }
         rob_.retire_head();
         ++retired;
         ++stats_.instructions_retired;
@@ -364,6 +382,18 @@ void OooCore::stage_schedule() {
             }
             u.mshr_id = *id;
             if (!u.is_load) store_fired = true;
+            if (trace_logger_) {
+                // peek() reflects the slot we just allocated. Its
+                // result.hit is the synchronous hit/miss decision the
+                // cache made inside issue() — exactly what we want to
+                // surface in the trace.
+                const auto* mshr = l1d_->peek(*id);
+                const bool hit_at_issue = mshr && mshr->result.hit;
+                trace_logger_->on_lsu_issue(
+                    core_id_, stats_.cycles, oldest->inst.dyn_count,
+                    oldest->inst.pc, oldest->inst.mem_addr,
+                    u.is_load, hit_at_issue);
+            }
 
             oldest->busy = true;
             ++num_fires;
@@ -435,6 +465,10 @@ void OooCore::stage_fetch() {
     }
 
     for (std::size_t i = 0; i < cfg_.fetch_width; ++i) {
+        // Bounded dispatch queue: stall fetch when there is no room.
+        // Check before reading from the trace so we don't drop records.
+        if (dispq_.size() >= cfg_.dispq_capacity) return;
+
         trace::Record rec{};
         if (!trace_->next(rec)) {
             eof_ = true;
