@@ -35,17 +35,22 @@ enum class Opcode : std::uint8_t {
     Branch = 4,
 };
 
-// Sentinel for "no operand". Matches project2's int8_t -1 convention.
-inline constexpr std::int8_t kNoReg = -1;
+// Sentinel for "no operand". Widened to int16_t so we can hold the full
+// uint8_t range of ChampSim register IDs (0-255) plus -1 for kNoReg.
+// Project2 used int8_t with NUM_REGS=32; real ChampSim records emit
+// register IDs above 127 (DynamoRIO dr_reg_id_t) which would wrap to
+// negative under int8_t and trigger out-of-bounds reads in the RAT.
+inline constexpr std::int16_t kNoReg = -1;
 
 struct Inst {
     std::uint64_t pc            = 0;
     Opcode        opcode        = Opcode::Alu;
 
-    // Architectural register numbers. -1 == no operand.
-    std::int8_t   dest          = kNoReg;
-    std::int8_t   src1          = kNoReg;
-    std::int8_t   src2          = kNoReg;
+    // Architectural register numbers. -1 == no operand. Widened to
+    // int16_t to cover ChampSim's full 0-255 register ID range.
+    std::int16_t  dest          = kNoReg;
+    std::int16_t  src1          = kNoReg;
+    std::int16_t  src2          = kNoReg;
 
     // Memory address for loads / stores. 0 if not a memory op.
     std::uint64_t mem_addr      = 0;

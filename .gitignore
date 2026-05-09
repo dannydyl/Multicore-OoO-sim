@@ -56,3 +56,6 @@ out.json
 *.profraw
 *.gcda
 *.gcno
+
+# understand-anything plugin output (knowledge graph, fingerprints, ignore config)
+.understand-anything/

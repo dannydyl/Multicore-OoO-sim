@@ -224,10 +224,17 @@ void OooCore::stage_exec() {
             // Load completion: broadcast on CDB so dependent ops wake.
             writeback(u.sched_ptr);
         } else {
-            // Store completion: just mark ROB ready and erase from
-            // schedQ — no CDB broadcast (stores don't write a reg).
-            rob_[u.sched_ptr->rob_idx].ready = true;
-            sq_.erase_by_tag(u.sched_ptr->dest_tag);
+            // Store completion: project2 stores didn't write registers
+            // so the original code skipped CDB. ChampSim records do
+            // populate destination_registers[] for stores that have
+            // architectural side effects (x86 push/pop, auto-increment
+            // addressing modes), so we must mark the RAT entry complete
+            // and wake dependents — otherwise younger ops reading that
+            // register sit at src_ready=false forever and the pipeline
+            // deadlocks. Stores with inst.dest == kNoReg are handled
+            // safely: writeback's mark_complete/erase paths no-op on
+            // kNoReg, and a kNoReg dest_tag has no dependents to wake.
+            writeback(u.sched_ptr);
         }
         l1d_->complete(u.mshr_id);
         u.busy      = false;

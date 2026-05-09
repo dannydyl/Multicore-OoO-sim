@@ -140,8 +140,14 @@ std::vector<fs::path> resolve_per_core_traces(const CliArgs& cli, int cores) {
     }
     std::string line;
     while (std::getline(in, line)) {
+        // Strip inline comment first ("path # note") then trim. This
+        // matches the convention used by run_sweep.py and gen_synth.py
+        // and is a no-op for whole-line comments (they shrink to "").
+        if (auto hash = line.find('#'); hash != std::string::npos) {
+            line.erase(hash);
+        }
         line = trim(line);
-        if (line.empty() || line.front() == '#') continue;
+        if (line.empty()) continue;
         fs::path p = line;
         if (p.is_relative()) p = manifest_dir / p;
         if (!fs::exists(p)) {

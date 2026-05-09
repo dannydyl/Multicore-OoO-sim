@@ -6,17 +6,18 @@ namespace {
 
 // First non-zero entry in a fixed-size array, or kNoReg if all zero.
 // project2 maps register 0 to -1 (proj2_driver.cpp:231); ChampSim does
-// the same convention, treating 0 as "unused slot".
+// the same convention, treating 0 as "unused slot". Returns int16_t so
+// the full uint8_t range (1-255) survives without sign-truncation.
 template <std::size_t N>
-std::int8_t first_nonzero_reg(const std::array<std::uint8_t, N>& regs) {
+std::int16_t first_nonzero_reg(const std::array<std::uint8_t, N>& regs) {
     for (auto r : regs) {
-        if (r != 0) return static_cast<std::int8_t>(r);
+        if (r != 0) return static_cast<std::int16_t>(r);
     }
     return kNoReg;
 }
 
 template <std::size_t N>
-std::int8_t second_nonzero_reg(const std::array<std::uint8_t, N>& regs) {
+std::int16_t second_nonzero_reg(const std::array<std::uint8_t, N>& regs) {
     bool found_first = false;
     for (auto r : regs) {
         if (r == 0) continue;
@@ -24,7 +25,7 @@ std::int8_t second_nonzero_reg(const std::array<std::uint8_t, N>& regs) {
             found_first = true;
             continue;
         }
-        return static_cast<std::int8_t>(r);
+        return static_cast<std::int16_t>(r);
     }
     return kNoReg;
 }

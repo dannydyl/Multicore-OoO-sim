@@ -12,21 +12,21 @@ Rat::Rat() : entries_(kNumArchRegs) {
     }
 }
 
-RatEntry Rat::read(std::int8_t addr) const {
+RatEntry Rat::read(std::int16_t addr) const {
     if (addr == kNoReg) {
         return RatEntry{};   // {tag=0, ready=true}
     }
     return entries_[static_cast<std::size_t>(addr)];
 }
 
-void Rat::write_use(std::int8_t addr, std::uint64_t tag) {
+void Rat::write_use(std::int16_t addr, std::uint64_t tag) {
     if (addr == kNoReg) return;
     auto& e = entries_[static_cast<std::size_t>(addr)];
     e.tag   = tag;
     e.ready = false;
 }
 
-void Rat::mark_complete(std::int8_t addr, std::uint64_t tag) {
+void Rat::mark_complete(std::int16_t addr, std::uint64_t tag) {
     if (addr == kNoReg) return;
     auto& e = entries_[static_cast<std::size_t>(addr)];
     if (e.tag == tag) {

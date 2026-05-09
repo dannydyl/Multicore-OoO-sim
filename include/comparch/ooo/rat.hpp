@@ -30,7 +30,13 @@
 
 namespace comparch::ooo {
 
-inline constexpr std::size_t kNumArchRegs = 32;  // project2's NUM_REGS
+// ChampSim records 8-bit register IDs (uint8_t in source_registers /
+// destination_registers). DynamoRIO + ChampSim use the full uint8_t
+// range — synth traces happen to stay within 0-31 (project2's
+// NUM_REGS), but real SPEC2017 traces routinely use registers above
+// 32 (extended GPRs, SIMD, control registers). Sizing the RAT to 256
+// covers any uint8_t value without runtime checks.
+inline constexpr std::size_t kNumArchRegs = 256;
 
 struct RatEntry {
     std::uint64_t tag   = 0;
@@ -44,15 +50,15 @@ public:
     // Read the current (tag, ready) for an architectural register.
     // For kNoReg (-1, "no operand"), returns {tag=0, ready=true} so the
     // caller can treat absent operands as immediately-ready dependencies.
-    RatEntry read(std::int8_t addr) const;
+    RatEntry read(std::int16_t addr) const;
 
     // Allocate `tag` to `addr` as the new in-flight destination. Marks
     // the entry ready=false. No-op if addr == kNoReg.
-    void write_use(std::int8_t addr, std::uint64_t tag);
+    void write_use(std::int16_t addr, std::uint64_t tag);
 
     // Writeback completion. If addr's entry still carries `tag`, flip it
     // ready=true. Stale (overwritten) tags are silently ignored.
-    void mark_complete(std::int8_t addr, std::uint64_t tag);
+    void mark_complete(std::int16_t addr, std::uint64_t tag);
 
     // Flush everything to ready (used on retired misprediction).
     void flush_to_ready();

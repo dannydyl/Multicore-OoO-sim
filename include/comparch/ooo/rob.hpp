@@ -21,7 +21,7 @@ namespace comparch::ooo {
 
 struct RobEntry {
     bool          ready     = false;
-    std::int8_t   dest_reg  = kNoReg;
+    std::int16_t  dest_reg  = kNoReg;
     std::uint64_t dest_tag  = 0;
     Inst          inst{};
 };
