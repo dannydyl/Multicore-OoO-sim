@@ -171,6 +171,11 @@ fetch-traces:
 	@bash $(SCRIPTS)/fetch_traces.sh || \
 	  echo "WARN: fetch_traces.sh exited non-zero; sweep will skip missing dirs"
 
+validate-champsim: build
+	@echo "==> validate_champsim.py"
+	@$(PYTHON) $(SCRIPTS)/validate_champsim.py $(EXTRA) || \
+	  echo "WARN: validate_champsim.py reported out-of-band results; investigate."
+
 traces: gen-synth fetch-traces
 
 sweep: build

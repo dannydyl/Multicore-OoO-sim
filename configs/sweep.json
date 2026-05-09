@@ -10,7 +10,9 @@
 
   "synth_patterns": ["sequential", "loop", "stream", "random"],
 
-  "champsim_benches": ["mcf", "perlbench", "server"],
+  "champsim_benches": ["mcf", "perlbench", "xalancbmk", "omnetpp", "xz", "gcc", "deepsjeng", "leela"],
+
+  "champsim_mixes": ["balanced_4core", "hi_mpki_4core", "mid_mpki_4core", "lo_mpki_4core"],
 
   "axes": {
     "proto": [
@@ -56,22 +58,27 @@
   "tiers": {
     "smoke":  { "synth_sizes": ["tiny"],
                 "champsim":    [],
+                "champsim_mixes": [],
                 "axes":        ["proto"],
                 "handpicked":  false },
     "short":  { "synth_sizes": ["tiny", "small"],
                 "champsim":    ["mcf"],
+                "champsim_mixes": ["balanced_4core"],
                 "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
                 "handpicked":  false },
     "medium": { "synth_sizes": ["tiny", "small", "medium"],
-                "champsim":    ["mcf", "perlbench"],
+                "champsim":    ["mcf", "perlbench", "leela", "xz"],
+                "champsim_mixes": ["balanced_4core"],
                 "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
                 "handpicked":  true },
     "long":   { "synth_sizes": ["tiny", "small", "medium", "large"],
-                "champsim":    ["mcf", "perlbench", "server"],
+                "champsim":    ["mcf", "perlbench", "xalancbmk", "omnetpp", "xz", "gcc", "deepsjeng", "leela"],
+                "champsim_mixes": ["balanced_4core", "hi_mpki_4core", "mid_mpki_4core", "lo_mpki_4core"],
                 "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
                 "handpicked":  true },
     "all":    { "synth_sizes": ["tiny", "small", "medium", "large"],
-                "champsim":    ["mcf", "perlbench", "server"],
+                "champsim":    ["mcf", "perlbench", "xalancbmk", "omnetpp", "xz", "gcc", "deepsjeng", "leela"],
+                "champsim_mixes": ["balanced_4core", "hi_mpki_4core", "mid_mpki_4core", "lo_mpki_4core"],
                 "axes":        ["proto", "rob", "l1kb", "predictor", "pf", "cores"],
                 "handpicked":  true }
   }

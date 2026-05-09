@@ -18,7 +18,7 @@ this **before** you panic about a 100% miss rate or a zero writeback count.
 5. [`traces/synth/sequential_*`](#5-tracessynthsequential_)
 6. [`traces/synth/stream_*`](#6-tracessynthstream_)
 7. [`traces/synth/random_*`](#7-tracessynthrandom_)
-8. [`traces/champsim/`](#8-traceschampsim)
+8. [`traces/champsim/` and `traces/mixes/`](#8-traceschampsim-and-tracesmixes)
 9. [Expected sweep behavior cheat sheet](#9-expected-sweep-behavior-cheat-sheet)
 10. [Known anomalies](#10-known-anomalies)
 
@@ -229,27 +229,96 @@ accuracy.
 
 ---
 
-## 8. `traces/champsim/`
+## 8. `traces/champsim/` and `traces/mixes/`
 
-Real SPEC-style ChampSim traces fetched on demand by
-[scripts/fetch_traces.sh](scripts/fetch_traces.sh).
+Real SPEC2017 ChampSim traces fetched on demand by
+[scripts/fetch_traces.sh](scripts/fetch_traces.sh) from the canonical
+hosting at `hpca23.cse.tamu.edu/champsim-traces/`. **The numbers you'd
+report to someone outside the project come from these traces.**
 
-| Property               | Value                                        |
-| ---------------------- | -------------------------------------------- |
-| Files                  | One per benchmark, named by `bzip2`, `mcf`, etc. |
-| Size                   | Hundreds of MB each (compressed)             |
-| Reuse                  | Realistic — varies by benchmark              |
-| Working set            | Realistic                                    |
+### 8.1 Per-benchmark dirs (`traces/champsim/<bench>/`)
 
-**What you should see:**
+The fetcher pulls 8 SimPoint traces spanning the MPKI spectrum used in
+the CRC-2 / DPC-3 / IPC-1 evaluation literature:
 
-- Behavior depends entirely on the benchmark. SPEC `mcf` is pointer-chasing
-  (memory-bound, low IPC, lots of L2 misses); `bzip2` is computation-heavy
-  with predictable access (high IPC, predictor matters).
-- IPC range: anywhere from 0.3 (pointer chasing) to 2.5+ (compute-bound).
-- Writebacks: realistic.
+| Bench       | SPEC2017 trace ID    | MPKI tier   | Character                        |
+| ----------- | -------------------- | ----------- | -------------------------------- |
+| `mcf`       | 605.mcf_s-665B       | high        | pointer-chasing, memory-bound    |
+| `omnetpp`   | 620.omnetpp_s-141B   | high        | discrete-event sim, irregular    |
+| `xalancbmk` | 623.xalancbmk_s-700B | high        | XML transformation               |
+| `xz`        | 657.xz_s-3167B       | mid         | compression, mixed phases        |
+| `gcc`       | 602.gcc_s-734B       | low-mid     | compiler workload                |
+| `deepsjeng` | 631.deepsjeng_s-928B | low         | game-tree search                 |
+| `leela`     | 641.leela_s-862B     | low         | branch-heavy game tree           |
+| `perlbench` | 600.perlbench_s-210B | low         | Perl interpreter, compute-bound  |
 
-**Use it to:** report numbers to anyone who isn't running this simulator.
+Each `traces/champsim/<bench>/` contains `raw.champsimtrace` and four
+`p0..p3` symlinks all pointing at it. **This is a *homogeneous* layout
+— all four cores execute byte-identical instruction streams.** That
+makes per-bench runs a useful **diagnostic stress test** (max-coherence-
+traffic case for that workload), but **not** a realistic multi-core
+workload model. For protocol comparisons and "what would a published
+paper see?" numbers, use the mix manifests in §8.2 instead.
+
+```sh
+# Diagnostic stress test (4 cores hammer the same trace):
+make run TRACE=traces/champsim/mcf TAG=stress
+```
+
+### 8.2 Multi-program mixes (`traces/mixes/*.txt`)
+
+[`--trace-list`](RUNNING.md#L298) manifests that put a *different* SPEC
+benchmark on each core — the standard "SPEC rate-style" multi-program
+configuration used in CRC-2/DPC-3/IPC-1 evaluations. No two cores share
+addresses (each benchmark has its own VA-space layout in the recording),
+so the workload models 4 unrelated processes co-running on a 4-core
+chip.
+
+Currently shipped:
+
+| Manifest                            | Mix                                       | Use for                                                       |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------- |
+| `traces/mixes/balanced_4core.txt`   | mcf + xz + leela + perlbench              | one bench per MPKI tier; default mix                          |
+| `traces/mixes/hi_mpki_4core.txt`    | mcf + omnetpp + xalancbmk + xz            | memory-subsystem stress; max protocol differentiation         |
+| `traces/mixes/mid_mpki_4core.txt`   | xz + gcc + deepsjeng + xalancbmk          | "typical" workload; moderate memory pressure                  |
+| `traces/mixes/lo_mpki_4core.txt`    | perlbench + leela + gcc + deepsjeng       | compute-bound; isolates OoO core / predictor behavior         |
+
+> Only `balanced_4core` is fetchable with the default `make fetch-traces`
+> entries. The other three need the full 8-bench corpus — uncomment the
+> trailing rows of the `TRACES` array in
+> [scripts/fetch_traces.sh](scripts/fetch_traces.sh) and rerun.
+
+```sh
+# Realistic multi-program run (recommended for protocol comparison):
+make run TRACE=traces/mixes/balanced_4core.txt TAG=mix
+```
+
+### 8.3 What you should see
+
+- **Per-core IPC** varies by benchmark: 0.1–0.6 for memory-bound (mcf,
+  omnetpp), 0.5–1.5 for mid (xz, gcc, xalancbmk), 0.8–2.0 for compute-
+  bound (perlbench, leela, deepsjeng). On a heterogeneous mix you'll
+  see clearly different per-core IPCs in the report — that's the
+  smoking gun that the manifest loaded distinct traces.
+- **L1 miss rate**: 1–5% for compute-bound, 10–30% for memory-bound.
+  Two orders of magnitude lower than the synth stress traces (which
+  is the point — this is what a real workload looks like).
+- **Protocol differentiation**: MI / MSI / MESI / MOSI / MOESIF
+  produce *different* cycle counts here, unlike the synth runs where
+  everything was within noise. The differences are usually small
+  (a few percent) on rate-style mixes because cross-core sharing
+  is incidental, not structural — true multi-threaded workloads
+  (forthcoming via DynamoRIO; see [docs/tracing.md](docs/tracing.md))
+  will widen the gap.
+
+### 8.4 Why per-bench dirs are diagnostic-only
+
+This mirrors the synth-trace anomaly documented in §2: the homogeneous
+4-core symlink layout makes every line touched by all four cores
+simultaneously, which is neither a realistic multi-program scenario
+(processes don't share that aggressively) nor a realistic multi-
+threaded one (threads share *some* data but not *all* of it). Use
+the mixes for any number you'd put in a paper.
 
 ---
 
@@ -265,7 +334,8 @@ each trace family **should** look like under MESI (the default):
 | `sequential_*`  | ~1.00        | ~1.00        | ~0.008         | ~30 K / core  | no (private per core) |
 | `stream_*`      | ~1.00        | ~1.00        | ~0.008         | ~30 K / core  | no (private per core) |
 | `random_*`      | ~1.00        | ~0.98        | ~0.008         | ~30 K / core  | no (private per core) |
-| `champsim/*`    | varies       | varies       | 0.3–2.5        | varies        | varies            |
+| `champsim/*` (homogeneous) | varies | varies | 0.1–2.0 (per bench) | varies | weak (workload identical on all 4 cores) |
+| `mixes/*` (rate-style)     | 0.05–0.30 | 0.10–0.40 | 0.3–1.0 aggregate | varies | yes — recommended for protocol comparison |
 
 If a number is **two orders of magnitude** off this table, it's probably a
 bug. If it's within a factor of 2, it's probably real workload variance.

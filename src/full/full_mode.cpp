@@ -59,7 +59,7 @@ namespace {
 // outliers that don't even fit in 30 min wallclock. The "real" fix is
 // either heterogeneous traces or a finer-grained no-progress watchdog;
 // this constant stays at 50M for routine harness use.
-constexpr coherence::Timestamp kGlobalCap = 50'000'000;
+constexpr coherence::Timestamp kGlobalCap = 100'000'000;
 
 // Per-core ownership pack. The Network holds non-owning pointers into
 // these (CoherenceAdapter as CpuPort, adapter->coh_cache() as the

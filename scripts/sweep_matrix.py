@@ -40,6 +40,7 @@ class SweepMatrix:
     synth_tiers: dict[str, dict[str, Any]]
     synth_patterns: list[str]
     champsim_benches: list[str]
+    champsim_mixes: list[str]
     axes: dict[str, list[tuple[str, dict[str, Any]]]]
     handpicked: list[tuple[str, dict[str, Any]]]
     tiers: dict[str, dict[str, Any]]
@@ -72,6 +73,7 @@ def load_matrix(path: Path | None = None) -> SweepMatrix:
         synth_tiers=raw.get("synth_tiers", {}),
         synth_patterns=list(raw.get("synth_patterns", [])),
         champsim_benches=list(raw.get("champsim_benches", [])),
+        champsim_mixes=list(raw.get("champsim_mixes", [])),
         axes=axes,
         handpicked=handpicked,
         tiers=raw.get("tiers", {}),
@@ -80,6 +82,10 @@ def load_matrix(path: Path | None = None) -> SweepMatrix:
 
 
 def _trace_id_to_dir(trace_id: str, repo_root: Path) -> Path:
+    # trace_id "mixes/balanced_4core" -> traces/mixes/balanced_4core.txt (a manifest file).
+    # Anything else is a directory (synth/loop_tiny, champsim/mcf, core_4, ...).
+    if trace_id.startswith("mixes/"):
+        return repo_root / "traces" / f"{trace_id}.txt"
     return repo_root / "traces" / trace_id
 
 
@@ -99,6 +105,8 @@ def trace_ids_for_tier(tier_label: str, matrix: SweepMatrix) -> list[str]:
             ids.append(f"synth/{pat}_{size}")
     for bench in spec.get("champsim", []):
         ids.append(f"champsim/{bench}")
+    for mix in spec.get("champsim_mixes", []):
+        ids.append(f"mixes/{mix}")
     return ids
 
 

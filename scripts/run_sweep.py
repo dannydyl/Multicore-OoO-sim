@@ -72,7 +72,10 @@ def materialize_config(cfg: dict, out_path: Path) -> Path:
 
 
 def predicted_run_dir(spec: RunSpec, sweep_id: str) -> Path:
-    base = spec.trace_dir.name
+    # Match the simulator's run-dir naming (src/full/full_mode.cpp:705):
+    #   - --trace-dir DIR    -> base = DIR.name      (e.g. "mcf")
+    #   - --trace-list FILE  -> base = FILE.stem     (e.g. "balanced_4core")
+    base = spec.trace_dir.stem if spec.trace_dir.is_file() else spec.trace_dir.name
     tag = f"{sweep_id}__{spec.run_id}"
     return REPO_ROOT / "report" / f"{base}_{spec.protocol}_c{spec.cores}_{tag}"
 
@@ -112,10 +115,13 @@ def run_one(
     meta_path = log_dir / f"{stem}.meta.json"
 
     tag = f"{sweep_id}__{spec.run_id}"
+    # Manifests (traces/mixes/*.txt) go through --trace-list; per-bench
+    # directories go through --trace-dir. The simulator forbids using both.
+    trace_flag = "--trace-list" if spec.trace_dir.is_file() else "--trace-dir"
     cmd = [
         str(SIM_BIN),
         "--config", str(cfg_path),
-        "--trace-dir", str(spec.trace_dir),
+        trace_flag, str(spec.trace_dir),
         "--tag", tag,
     ]
 
@@ -204,6 +210,26 @@ def main(argv=None) -> int:
                    only_traces=only_traces or None)
 
     def trace_dir_ready(d: Path) -> bool:
+        # Two cases:
+        #   - per-core directory: traces/<id>/ contains p0.champsimtrace
+        #   - manifest file: traces/mixes/<id>.txt — must exist and have
+        #     all the per-line trace files reachable from the manifest dir
+        if d.is_file():
+            try:
+                lines = d.read_text().splitlines()
+            except OSError:
+                return False
+            base = d.parent
+            for raw in lines:
+                line = raw.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                tp = Path(line)
+                if not tp.is_absolute():
+                    tp = base / tp
+                if not tp.exists():
+                    return False
+            return True
         return d.is_dir() and (d / "p0.champsimtrace").exists()
 
     missing = sorted({s.trace_id for s in specs if not trace_dir_ready(s.trace_dir)})
