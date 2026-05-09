@@ -433,6 +433,81 @@ two registers and memory), `xadd` (atomic add-and-fetch, updates
 register, memory, and RFLAGS), `bts`/`btr`/`btc` with a memory
 operand (bit-test-and-set, updates RFLAGS).
 
+##### Aside: how real CPUs actually execute these (uop decomposition)
+
+Real x86 and ARM cores don't execute `push rax` or `stp ..., [sp,
+#-16]!` as a single OoO operation. The front-end decoder
+**cracks** each architectural instruction into one or more
+**micro-ops (uops)** — the actual unit of work the renamer,
+scheduler, and execution units operate on. Each uop has at most
+**one destination register** and runs on a single execution port,
+which is what makes the renamer's job tractable: every uop is a
+clean Tomasulo-style "produces one tag, consumes a few tags" unit.
+
+Our three examples, decomposed:
+
+- **`push rax` on Intel/AMD x86** → roughly **2 uops** in the
+  renamer:
+  ```
+  sub rsp, 8        ; ALU uop on the integer pipe;
+                    ; produces a fresh physical tag for rsp
+  store [rsp], rax  ; store uop on the AGU/store-data ports;
+                    ; consumes the new rsp tag + rax
+  ```
+  The store uop has a real RAW dependency on the sub-rsp uop's
+  tag — exactly the dependency our model is supposed to track at
+  macro-op granularity.
+
+- **`stp x29, x30, [sp, #-16]!` on ARM** → typically **3 uops**:
+  ```
+  sub sp, sp, #16        ; sp pre-decrement
+  store [sp],   x29       ; first half of the pair
+  store [sp+8], x30       ; second half of the pair
+  ```
+  Apple's M-series and ARM's high-end cores fuse some of these
+  for throughput (e.g. one combined "store-pair" uop), but the
+  renamer always sees a separate sub-sp uop producing the new
+  `sp` tag — same dependency shape as the x86 push.
+
+- **`lock cmpxchg [rdi], rcx`** → often **5+ uops** on modern x86:
+  a load uop, a compare uop (writes RFLAGS), a conditional store
+  uop, a conditional register-move uop (for the CAS-fail path),
+  and a memory-fence uop that makes the `lock` prefix atomic.
+  Each renamed independently; the flag-write is its own physical
+  destination.
+
+**Why this matters for our model.** The ChampSim record format and
+our `Inst` struct are one-record-per-architectural-instruction —
+we model the renamer at **macro-op granularity**, not uop
+granularity. `Inst::dest` is a single register even when the
+underlying machine instruction would crack into 2–5 uops with
+their own destinations. We take the "first non-zero entry" from
+`destination_registers[]` and call it the destination
+([src/ooo/inst.cpp:50-72](../src/ooo/inst.cpp#L50-L72)). This
+matches project2's design and is what makes the simulator small
+enough to read in a weekend, but it's a real abstraction. We are
+*not* modeling:
+
+- The internal RAW dependency between sub-rsp and the store within
+  a single `push` — a real CPU serializes them via the renamer;
+  we collapse them
+- Multi-port issue rates — a real `push` consumes an ALU port AND
+  an AGU+store port in the same cycle on a wide enough machine;
+  we consume one LSU FU slot for the whole instruction
+- RFLAGS as a separately renamable resource — cmpxchg's flag
+  update is its own physical destination on real cores; we either
+  drop it or fold it into the single `dest`
+
+**Implication for Bug 2.** Even at our coarser macro-op
+granularity, *that one collapsed destination register still has
+to be tracked through the RAT correctly.* Dropping the
+mark_complete on a STORE's destination is, in real-CPU terms,
+equivalent to the renamer forgetting to broadcast a uop's
+completion on the CDB. A real silicon pipeline that did that
+would deadlock the same way ours did — the dependency graph just
+*stops*. The fact that we model 1 uop per macro-op instead of N
+doesn't excuse losing the 1.
+
 ##### Frequency in real traces
 
 In the four SPEC2017 traces tested here, roughly **30–60 % of STORE
