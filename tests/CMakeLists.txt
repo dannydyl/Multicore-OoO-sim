@@ -126,6 +126,7 @@ catch_discover_tests(test_proj2_to_champsim)
 add_executable(test_coherence
     coherence/test_coherence_stats.cpp
     coherence/test_fici_cpu.cpp
+    coherence/test_lls_cache.cpp
     coherence/test_mi.cpp
     coherence/test_network_basic.cpp
     coherence/test_proj3_regression.cpp

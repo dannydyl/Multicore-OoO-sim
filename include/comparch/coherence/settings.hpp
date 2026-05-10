@@ -45,6 +45,12 @@ struct Settings {
     // explicit "not yet implemented" runtime error in full mode.
     CacheMode cache_mode = CacheMode::PrivateL2;
     Inclusion inclusion  = Inclusion::Inclusive;
+    // LLS geometry, only meaningful when cache_mode == SharedLls.
+    // lls_blocks = size_kb * 1024 / block_size; computed at to_settings()
+    // time so the directory + LLS cache can pick it up directly.
+    std::size_t lls_blocks      = 0;       // total LLS capacity in 64-byte blocks
+    std::size_t lls_assoc       = 16;      // ways per set
+    std::size_t lls_hit_latency = 10;      // cycles to satisfy an LLS hit
 };
 
 // Compute header_flits / payload_flits from the *_log2 fields.

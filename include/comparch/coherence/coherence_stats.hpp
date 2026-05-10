@@ -23,6 +23,17 @@ struct CoherenceStats {
     std::uint64_t c2c_transfers  = 0;
     std::uint64_t memory_reads   = 0;
     std::uint64_t memory_writes  = 0;
+    // Shared-LLS counters. All zero in private_l2 mode (LLS isn't
+    // present, so it never accesses or evicts). Only the coherence.rpt
+    // section reads these; print_stats() above keeps the project3
+    // byte-for-byte format and so does NOT include them.
+    std::uint64_t lls_accesses   = 0;
+    std::uint64_t lls_hits       = 0;
+    std::uint64_t lls_misses     = 0;
+    std::uint64_t lls_evictions  = 0;
+    // Back-invalidations sent on LLS evictions under inclusive policy.
+    // Counted at the directory side, once per (sharer, evicted-block) pair.
+    std::uint64_t lls_back_invalidations = 0;
 };
 
 // Returns the legacy proto_str entry for `protocol` ("MSI" -> "MSI_PRO").

@@ -17,6 +17,7 @@ add_library(casim_coherence STATIC
     directory_msi.cpp
     factory.cpp
     fici_cpu.cpp
+    lls_cache.cpp
     message.cpp
     network.cpp
     node.cpp

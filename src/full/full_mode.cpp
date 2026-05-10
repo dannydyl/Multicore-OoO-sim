@@ -104,6 +104,13 @@ coherence::Settings to_settings(const SimConfig& cfg) {
         throw ConfigError("inclusion='non_inclusive' is reserved for a follow-up; "
                           "v0 only supports inclusive LLS");
     }
+    // LLS geometry. Always populated so logs/reports can render it even
+    // in private_l2 mode (the directory just won't consult an LlsCache).
+    const std::size_t bs = static_cast<std::size_t>(cfg.lls.block_size);
+    s.lls_blocks      = bs == 0 ? 0
+                                : static_cast<std::size_t>(cfg.lls.size_kb) * 1024 / bs;
+    s.lls_assoc       = static_cast<std::size_t>(cfg.lls.assoc);
+    s.lls_hit_latency = static_cast<std::size_t>(cfg.lls.hit_latency);
     coherence::finalize_settings(s);
     return s;
 }
