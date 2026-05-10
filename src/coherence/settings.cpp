@@ -24,6 +24,34 @@ const char* protocol_label(Protocol p) {
     return "?";
 }
 
+CacheMode parse_cache_mode(const std::string& s) {
+    if (s == "private_l2") return CacheMode::PrivateL2;
+    if (s == "shared_lls") return CacheMode::SharedLls;
+    throw ConfigError("unknown cache_mode: '" + s + "' (expected 'private_l2' or 'shared_lls')");
+}
+
+const char* cache_mode_label(CacheMode m) {
+    switch (m) {
+        case CacheMode::PrivateL2: return "private_l2";
+        case CacheMode::SharedLls: return "shared_lls";
+    }
+    return "?";
+}
+
+Inclusion parse_inclusion(const std::string& s) {
+    if (s == "inclusive")     return Inclusion::Inclusive;
+    if (s == "non_inclusive") return Inclusion::NonInclusive;
+    throw ConfigError("unknown inclusion policy: '" + s + "' (expected 'inclusive' or 'non_inclusive')");
+}
+
+const char* inclusion_label(Inclusion p) {
+    switch (p) {
+        case Inclusion::Inclusive:    return "inclusive";
+        case Inclusion::NonInclusive: return "non_inclusive";
+    }
+    return "?";
+}
+
 void finalize_settings(Settings& s) {
     // Match project3/simulator/settings.h: header is 16 bytes
     // (1 << 4) -> 1 << (4 - link_width); payload is one block.

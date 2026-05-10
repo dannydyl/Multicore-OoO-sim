@@ -136,10 +136,16 @@ void from_json(const nlohmann::json& j, CacheLevelConfig& v) {
 }
 
 void to_json(nlohmann::json& j, const CoherenceConfig& v) {
-    j = nlohmann::json{{"protocol", v.protocol}};
+    j = nlohmann::json{
+        {"protocol",   v.protocol},
+        {"cache_mode", v.cache_mode},
+        {"inclusion",  v.inclusion},
+    };
 }
 void from_json(const nlohmann::json& j, CoherenceConfig& v) {
-    v.protocol = j.value("protocol", v.protocol);
+    v.protocol   = j.value("protocol",   v.protocol);
+    v.cache_mode = j.value("cache_mode", v.cache_mode);
+    v.inclusion  = j.value("inclusion",  v.inclusion);
 }
 
 void to_json(nlohmann::json& j, const SimConfig& v) {
@@ -150,6 +156,7 @@ void to_json(nlohmann::json& j, const SimConfig& v) {
         {"core", v.core},
         {"l1", v.l1},
         {"l2", v.l2},
+        {"lls", v.lls},
         {"predictor", v.predictor},
         {"coherence", v.coherence},
     };
@@ -161,6 +168,7 @@ void from_json(const nlohmann::json& j, SimConfig& v) {
     v.core         = j.value("core",         v.core);
     v.l1           = j.value("l1",           v.l1);
     v.l2           = j.value("l2",           v.l2);
+    v.lls          = j.value("lls",          v.lls);
     v.predictor    = j.value("predictor",    v.predictor);
     v.coherence    = j.value("coherence",    v.coherence);
 }

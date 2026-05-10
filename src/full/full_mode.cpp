@@ -97,6 +97,13 @@ coherence::Settings to_settings(const SimConfig& cfg) {
     s.mem_latency     = static_cast<std::size_t>(cfg.memory.latency);
     s.block_size_log2 = static_cast<std::size_t>(cfg.interconnect.block_size_log2);
     s.link_width_log2 = static_cast<std::size_t>(cfg.interconnect.link_width_log2);
+    s.cache_mode      = coherence::parse_cache_mode(cfg.coherence.cache_mode);
+    s.inclusion       = coherence::parse_inclusion(cfg.coherence.inclusion);
+    if (s.cache_mode == coherence::CacheMode::SharedLls &&
+        s.inclusion  == coherence::Inclusion::NonInclusive) {
+        throw ConfigError("inclusion='non_inclusive' is reserved for a follow-up; "
+                          "v0 only supports inclusive LLS");
+    }
     coherence::finalize_settings(s);
     return s;
 }
@@ -755,6 +762,15 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
     const auto trace_paths = resolve_per_core_traces(cli, cfg.cores);
 
     const auto settings = to_settings(cfg);
+    if (settings.cache_mode == coherence::CacheMode::SharedLls) {
+        // Phase 1 only adds the schema. The shared-LLS data path (shared
+        // last-level cache + directory embedded in it + snoop layer)
+        // lands in Phase 2+. Until then, fail clearly rather than silently
+        // running the private-L2 path under a misleading config name.
+        LOG_ERROR("coherence.cache_mode='shared_lls' is not yet implemented; "
+                  "Phase 1 added the schema only. See report_doc/10-lls-hybrid-coherence.md");
+        return 3;
+    }
     coherence::CoherenceStats stats;
 
     // Resolve the run output directory up front so log.rpt (when LOG=1

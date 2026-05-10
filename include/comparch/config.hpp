@@ -77,6 +77,18 @@ struct CacheLevelConfig {
 
 struct CoherenceConfig {
     std::string protocol = "mesi";
+    // Cache-hierarchy topology. "private_l2" is the original Phase 5B
+    // design (per-core L1 + per-core L2; directory on its own ring node).
+    // "shared_lls" is the Phase 6 hybrid: per-core L1, single shared
+    // last-level cache (Last-Level Shared) with the directory embedded
+    // in it. Phase 1 only adds the schema; the shared_lls data path is
+    // built in Phase 2+.
+    std::string cache_mode = "private_l2";
+    // Inclusion policy for the shared LLS, when cache_mode = "shared_lls".
+    // Inclusive: every line in any L1 is also in the LLS, so an LLS miss
+    // means no L1 has it (snoop filter for free). v0 only supports
+    // inclusive; "non_inclusive" is reserved for a follow-up.
+    std::string inclusion = "inclusive";
 };
 
 struct SimConfig {
@@ -86,6 +98,19 @@ struct SimConfig {
     CoreConfig core{};
     CacheLevelConfig l1{};
     CacheLevelConfig l2{};
+    // Shared last-level cache config. Read only when
+    // coherence.cache_mode = "shared_lls"; ignored otherwise. Default
+    // sizes the LLS to roughly the aggregate of 4 private L2s
+    // (4 x 256 KB ~= 1 MB) so an apples-to-apples private-vs-shared
+    // capacity comparison is the natural baseline.
+    CacheLevelConfig lls{
+        .size_kb       = 1024,
+        .assoc         = 16,
+        .prefetcher    = "markov",
+        .hit_latency   = 10,
+        .n_markov_rows = 64,
+        .mshr_entries  = 32,
+    };
     // Top-level predictor block read by --mode predictor. Mirrors the
     // top-level l1/l2 blocks. core.predictor remains the per-core slot
     // used by Phase 4's OoO core.
