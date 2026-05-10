@@ -66,12 +66,21 @@ constexpr coherence::Timestamp kGlobalCap = 60'000'000;
 // per-node coherence::Cache).
 struct CoreStack {
     std::unique_ptr<predictor::BranchPredictor>  pred;
-    std::unique_ptr<cache::Cache>                l2;
+    std::unique_ptr<cache::Cache>                l2;   // null in shared_lls
     std::unique_ptr<cache::Cache>                l1;
     std::unique_ptr<coherence::CoherenceAdapter> adapter;
     std::unique_ptr<trace::Reader>               reader;
     std::unique_ptr<ooo::OooCore>                core;
 };
+
+// Per-core L2 may be absent in shared_lls mode. The reporting helpers
+// below all want a CacheStats reference; this returns a zero-initialized
+// static when l2 is null, so the call sites can stay reference-typed
+// without per-site null guards.
+const cache::CacheStats& l2_stats_or_empty(const CoreStack& cs) {
+    static const cache::CacheStats kEmpty;
+    return cs.l2 ? cs.l2->stats() : kEmpty;
+}
 
 ooo::OooConfig to_ooo_config(const SimConfig& cfg) {
     ooo::OooConfig occ;
@@ -449,7 +458,7 @@ void write_overview_per_core(std::ostream& os, const ReportContext& ctx) {
     for (std::size_t i = 0; i < ctx.stacks.size(); ++i) {
         const auto& s   = ctx.stacks[i]->core->stats();
         const auto& l1s = ctx.stacks[i]->l1->stats();
-        const auto& l2s = ctx.stacks[i]->l2->stats();
+        const auto& l2s = l2_stats_or_empty(*ctx.stacks[i]);
         const auto m    = compute_metrics(s, l1s, l2s, ctx.cfg);
 
         os << "[ Core " << i << " ]\n";
@@ -509,7 +518,7 @@ void write_detailed_per_core(std::ostream& os, const ReportContext& ctx) {
     for (std::size_t i = 0; i < ctx.stacks.size(); ++i) {
         const auto& s   = ctx.stacks[i]->core->stats();
         const auto& l1s = ctx.stacks[i]->l1->stats();
-        const auto& l2s = ctx.stacks[i]->l2->stats();
+        const auto& l2s = l2_stats_or_empty(*ctx.stacks[i]);
         const auto m    = compute_metrics(s, l1s, l2s, ctx.cfg);
 
         os << "[ Core " << i << " ]\n";
@@ -637,12 +646,38 @@ void write_coherence(std::ostream& os, const ReportContext& ctx) {
     }
 
     // System-wide invalidation count (sum across L1+L2 of every core).
+    // L2 may be absent in shared_lls mode; fall back to the empty stats.
     std::uint64_t invs_total = 0;
     for (auto& cs2 : ctx.stacks) {
         invs_total += cs2->l1->stats().coherence_invals;
-        invs_total += cs2->l2->stats().coherence_invals;
+        invs_total += l2_stats_or_empty(*cs2).coherence_invals;
     }
     kv(os, "", "Coherence invalidations",   str(invs_total));
+
+    // Shared-LLS section. Skipped in private_l2 mode because every
+    // counter is zero (the directory's LlsCache is disabled) and the
+    // section would just add noise to the report. cache_mode is in
+    // settings(), accessible via the directory we don't have here -- so
+    // gate on whether any counter is non-zero, which works for both
+    // modes without plumbing settings into the report context.
+    const bool any_lls_activity = (cs.lls_accesses + cs.lls_hits +
+                                   cs.lls_misses + cs.lls_evictions +
+                                   cs.lls_back_invalidations) > 0;
+    if (any_lls_activity) {
+        os << '\n';
+        write_separator(os, '-', "Shared LLS");
+        kv(os, "", "LLS accesses",             str(cs.lls_accesses));
+        kv(os, "", "LLS hits",                 str(cs.lls_hits));
+        kv(os, "", "LLS misses",               str(cs.lls_misses));
+        kv(os, "", "LLS evictions",            str(cs.lls_evictions));
+        kv(os, "", "LLS back-invalidations",   str(cs.lls_back_invalidations));
+        if (cs.lls_accesses != 0) {
+            const double hit_rate = static_cast<double>(cs.lls_hits) /
+                                    static_cast<double>(cs.lls_accesses);
+            kv(os, "", "LLS hit rate",
+               fix(100.0 * hit_rate, 3) + " %");
+        }
+    }
 }
 
 // stdout / report.rpt — the concise overview the user reads first.
@@ -695,7 +730,7 @@ void write_csv(std::ostream& os, const ReportContext& ctx) {
     for (std::size_t i = 0; i < ctx.stacks.size(); ++i) {
         const auto& s   = ctx.stacks[i]->core->stats();
         const auto& l1s = ctx.stacks[i]->l1->stats();
-        const auto& l2s = ctx.stacks[i]->l2->stats();
+        const auto& l2s = l2_stats_or_empty(*ctx.stacks[i]);
         const auto m    = compute_metrics(s, l1s, l2s, ctx.cfg);
         os << i
            << ',' << s.cycles
@@ -769,15 +804,7 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
     const auto trace_paths = resolve_per_core_traces(cli, cfg.cores);
 
     const auto settings = to_settings(cfg);
-    if (settings.cache_mode == coherence::CacheMode::SharedLls) {
-        // Phase 1 only adds the schema. The shared-LLS data path (shared
-        // last-level cache + directory embedded in it + snoop layer)
-        // lands in Phase 2+. Until then, fail clearly rather than silently
-        // running the private-L2 path under a misleading config name.
-        LOG_ERROR("coherence.cache_mode='shared_lls' is not yet implemented; "
-                  "Phase 1 added the schema only. See report_doc/10-lls-hybrid-coherence.md");
-        return 3;
-    }
+    const bool shared_lls = settings.cache_mode == coherence::CacheMode::SharedLls;
     coherence::CoherenceStats stats;
 
     // Resolve the run output directory up front so log.rpt (when LOG=1
@@ -820,26 +847,38 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
         auto cs = std::make_unique<CoreStack>();
         cs->pred = predictor::make(cfg.core.predictor);
 
-        // L2 first, no sink yet (chicken-and-egg with the adapter).
-        auto l2_cfg = cache::to_cache_config(cfg.l2);
-        cs->l2 = std::make_unique<cache::Cache>(std::move(l2_cfg),
-                                                "L2#" + std::to_string(i));
+        // Per-core L2 only exists in private_l2 mode. In shared_lls
+        // the LLS lives at the directory and L1 sinks straight into
+        // the adapter.
+        if (!shared_lls) {
+            auto l2_cfg = cache::to_cache_config(cfg.l2);
+            cs->l2 = std::make_unique<cache::Cache>(std::move(l2_cfg),
+                                                    "L2#" + std::to_string(i));
+        }
 
-        // L1 next, points at L2 as its next_level.
+        // L1 always present. In private_l2 it points at L2 as next_level
+        // and L2 sinks to the adapter; in shared_lls L1 sinks directly
+        // to the adapter (no intermediate L2). The adapter pointer
+        // doesn't exist yet, so wire the L1->adapter sink AFTER the
+        // adapter is built (post-construction set_coherence_sink).
         auto l1_cfg = cache::to_cache_config(cfg.l1);
-        l1_cfg.next_level = cs->l2.get();
+        l1_cfg.next_level = shared_lls ? nullptr : cs->l2.get();
         cs->l1 = std::make_unique<cache::Cache>(std::move(l1_cfg),
                                                 "L1#" + std::to_string(i));
-        cs->l2->set_peer_above(cs->l1.get());
+        if (cs->l2) cs->l2->set_peer_above(cs->l1.get());
 
         cs->adapter = std::make_unique<coherence::CoherenceAdapter>(
             i, settings, stats,
             coherence::make_agent_factory(settings.protocol),
-            *cs->l1, *cs->l2);
+            *cs->l1, cs->l2.get());   // l2 nullable; adapter handles null
 
-        // Splice the adapter behind L2 — now that we have a stable
-        // adapter pointer, the L2 can call into it for misses/evictions.
-        cs->l2->set_coherence_sink(cs->adapter.get());
+        // Splice the adapter into whichever cache is the bottom of this
+        // core's hierarchy: L2 in private mode, L1 in shared_lls mode.
+        if (shared_lls) {
+            cs->l1->set_coherence_sink(cs->adapter.get());
+        } else {
+            cs->l2->set_coherence_sink(cs->adapter.get());
+        }
 
         cs->reader = std::make_unique<trace::Reader>(
             trace_paths[i], trace::Variant::Standard);

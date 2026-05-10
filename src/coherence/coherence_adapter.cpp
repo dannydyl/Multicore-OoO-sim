@@ -54,8 +54,8 @@ CoherenceAdapter::CoherenceAdapter(NodeId id,
                                    CoherenceStats& stats,
                                    AgentFactory factory,
                                    cache::Cache& l1d,
-                                   cache::Cache& l2d)
-    : id_(id), settings_(s), l1d_(&l1d), l2d_(&l2d),
+                                   cache::Cache* l2d)
+    : id_(id), settings_(s), l1d_(&l1d), l2d_(l2d),
       coh_cache_(std::make_unique<Cache>(id, s, stats, std::move(factory))) {
     coh_cache_->my_cpu = this;
 }
@@ -125,14 +125,15 @@ void CoherenceAdapter::tick() {
         // that should produce many). L2 stays clean — write-allocate
         // dirty is L1-only; L2 dirties later when L1 writes back to it.
         const bool was_store = pending_stores_.erase(byte_block) > 0;
-        cache_fill(*l2d_, cache_block, /*rw=*/'R');
+        if (l2d_) cache_fill(*l2d_, cache_block, /*rw=*/'R');
         cache_fill(*l1d_, cache_block, /*rw=*/was_store ? 'W' : 'R');
 
         // Wake every L1 (and L2) MSHR entry that was parked on this
         // block. Phase 5B's L2 has no MSHR yet, but mark_block_ready is
-        // a no-op for empty MSHR tables.
+        // a no-op for empty MSHR tables. In shared_lls mode there is
+        // no L2.
         mark_block_ready(*l1d_, cache_block);
-        mark_block_ready(*l2d_, cache_block);
+        if (l2d_) mark_block_ready(*l2d_, cache_block);
 
         delete cache_in_next;
         cache_in_next = nullptr;
@@ -155,7 +156,7 @@ void CoherenceAdapter::on_ntwk_event(const Message& req) {
         case MessageKind::REQ_INVALID:
         case MessageKind::RECALL_GOTO_I:
             l1d_->coherence_invalidate(cache_block);
-            l2d_->coherence_invalidate(cache_block);
+            if (l2d_) l2d_->coherence_invalidate(cache_block);
             break;
         case MessageKind::RECALL_GOTO_S:
             // Downgrade-on-remote-read. RECALL_GOTO_S is overloaded

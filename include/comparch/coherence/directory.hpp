@@ -16,6 +16,7 @@
 #include <unordered_map>
 
 #include "comparch/coherence/coherence_stats.hpp"
+#include "comparch/coherence/lls_cache.hpp"
 #include "comparch/coherence/message.hpp"
 #include "comparch/coherence/settings.hpp"
 #include "comparch/coherence/types.hpp"
@@ -71,6 +72,12 @@ public:
     NodeId    target_node = 0;
     bool      request_in_progress = false;
     Timestamp response_time = 0;
+    // True iff the in-flight response (latched at schedule_data_response
+    // time) is satisfied from memory rather than the LLS. Used to charge
+    // memory_reads only on actual memory traffic. Always false in
+    // private_l2 mode (the LlsCache is disabled and every access misses
+    // -> charges mem_latency + memory_reads, matching the legacy path).
+    bool      pending_lls_miss = false;
 
     void tick(Timestamp clock);
     void tock();
@@ -88,6 +95,25 @@ public:
     // last sharer leaves). Returns true if the message was consumed
     // (dequeued or cycled). All protocol ticks call this first.
     bool handle_writeback(DirEntry* entry, const Message& request);
+
+    // Phase 6: schedule a directory-driven DATA response for `target` at
+    // `block`. Consults the LLS (when active): on hit, response is fast
+    // (lls_hit_latency); on miss, response charges mem_latency and the
+    // block is installed in LLS, possibly back-invalidating sharers of
+    // the victim block under inclusive policy.
+    //
+    // In private_l2 mode the LlsCache is disabled (size=0), so every
+    // call misses with no install -- response_time = mem_latency, no
+    // back-invalidate, lls_hits/misses/evictions stay zero. The only
+    // behavioral change vs. the legacy code is that memory_reads is
+    // charged at response time instead of inline at the call site;
+    // pending_lls_miss carries the decision across cycles.
+    void schedule_data_response(BlockId block, NodeId target);
+
+    // LLS instance backing schedule_data_response(). Sized from
+    // settings_.lls_blocks / lls_assoc; disabled when cache_mode ==
+    // PrivateL2 (size_blocks=0 -> permanent miss with no install).
+    LlsCache lls;
 
     // Per-protocol implementations (Steps 4-8 fill these in). Each reads
     // current_clock_ for memory-latency comparisons.

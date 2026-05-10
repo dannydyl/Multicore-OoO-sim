@@ -39,15 +39,18 @@ namespace comparch::coherence {
 
 class CoherenceAdapter : public cache::CoherenceSink, public CpuPort {
 public:
-    // l1d and l2d are non-owning. The caller (run_full_mode) outlives
-    // the adapter and is responsible for wiring `l2d.cfg.coherence_sink`
-    // to point here AFTER construction.
+    // l1d non-owning; required. l2d non-owning; nullable: in shared_lls
+    // mode the per-core L2 doesn't exist, the L1 sinks straight into the
+    // adapter, and the directory's LLS handles capacity. In private_l2
+    // mode the caller (run_full_mode) wires l2d.cfg.coherence_sink to
+    // point here AFTER construction. nullptr disables all L2 fill /
+    // invalidate / mark-ready paths inside the adapter.
     CoherenceAdapter(NodeId id,
                      const Settings& s,
                      CoherenceStats& stats,
                      AgentFactory factory,
                      cache::Cache& l1d,
-                     cache::Cache& l2d);
+                     cache::Cache* l2d);
     ~CoherenceAdapter();
 
     NodeId id() const { return id_; }

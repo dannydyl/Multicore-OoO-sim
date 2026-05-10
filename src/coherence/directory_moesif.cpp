@@ -19,35 +19,26 @@ void DirectoryController::MOESIF_tick() {
             if (handle_writeback(entry, *request)) {
                 // already dequeued / cycled; fall through to mem-response.
             } else if (entry->state == DirState::I && request->kind == MessageKind::GETM) {
-                request_in_progress = true;
-                tag_to_send   = request->block;
-                target_node   = request->src;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::M;
                 entry->presence[request->src] = true;
                 ++entry->active_sharers;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::I && request->kind == MessageKind::GETS) {
-                request_in_progress = true;
-                tag_to_send   = request->block;
-                target_node   = request->src;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::E;
                 send_E = true;
                 entry->presence[request->src] = true;
                 ++entry->active_sharers;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::I && request->kind == MessageKind::GETX) {
                 // Eviction-desync: an E-holder evicted (DATA_WB drove dir
                 // to I) but the agent FSM stayed in E and STORE'd, sending
                 // GETX. Mirror (I, GETM): mem-fetch, grant exclusive.
-                request_in_progress = true;
-                tag_to_send   = request->block;
-                target_node   = request->src;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::M;
                 entry->presence[request->src] = true;
                 ++entry->active_sharers;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::S && request->kind == MessageKind::GETS) {
                 // MOESIF reaches DirState::S via the shared handle_writeback
@@ -55,14 +46,11 @@ void DirectoryController::MOESIF_tick() {
                 // protocol normally avoids S as a stable state, but once
                 // there, fall back to MSI-style handling: mem-fetch + add
                 // requester to presence; line stays S.
-                request_in_progress = true;
-                tag_to_send   = request->block;
-                target_node   = request->src;
-                response_time = current_clock_ + settings_.mem_latency;
                 if (!entry->presence[request->src]) {
                     entry->presence[request->src] = true;
                     ++entry->active_sharers;
                 }
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::S &&
                        (request->kind == MessageKind::GETM ||
@@ -107,14 +95,12 @@ void DirectoryController::MOESIF_tick() {
                         entry->state = DirState::M;
                         entry->dirty = true;
                     } else {
-                        request_in_progress = true;
-                        tag_to_send   = request->block;
-                        target_node   = entry->req_node_in_transient;
-                        response_time = current_clock_ + settings_.mem_latency;
                         entry->presence[entry->req_node_in_transient] = true;
                         ++entry->active_sharers;
                         entry->state = DirState::M;
                         entry->dirty = true;
+                        schedule_data_response(request->block,
+                                               entry->req_node_in_transient);
                     }
                 }
                 dequeue();
@@ -426,7 +412,7 @@ void DirectoryController::MOESIF_tick() {
     }
 
     if (request_in_progress && current_clock_ >= response_time) {
-        ++stats_.memory_reads;
+        if (pending_lls_miss) ++stats_.memory_reads;
         if (send_E) {
             send_Request(target_node, tag_to_send, MessageKind::DATA_E);
             send_E = false;

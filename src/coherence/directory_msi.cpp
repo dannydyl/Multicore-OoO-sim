@@ -19,8 +19,6 @@ void DirectoryController::MSI_tick() {
             if (handle_writeback(entry, *request)) {
                 // already dequeued / cycled; fall through to mem-response.
             } else if (entry->state == DirState::I && request->kind == MessageKind::GETM) {
-                request_in_progress = true;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::M;
                 entry->dirty  = true;
                 entry->block_id = request->block;
@@ -29,12 +27,9 @@ void DirectoryController::MSI_tick() {
                     entry->presence[request->src] = true;
                     ++entry->active_sharers;
                 }
-                target_node = request->src;
-                tag_to_send = request->block;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::I && request->kind == MessageKind::GETS) {
-                request_in_progress = true;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::S;
                 entry->dirty  = false;
                 entry->block_id = request->block;
@@ -43,8 +38,7 @@ void DirectoryController::MSI_tick() {
                     entry->presence[request->src] = true;
                     ++entry->active_sharers;
                 }
-                target_node = request->src;
-                tag_to_send = request->block;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::M && request->kind == MessageKind::GETM) {
                 NodeId old_owner = 0;
@@ -116,15 +110,12 @@ void DirectoryController::MSI_tick() {
                 }
                 dequeue();
             } else if (entry->state == DirState::S && request->kind == MessageKind::GETS) {
-                request_in_progress = true;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::S;
                 if (!entry->presence[request->src]) {
                     entry->presence[request->src] = true;
                     ++entry->active_sharers;
                 }
-                target_node = request->src;
-                tag_to_send = request->block;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::SM && request->kind == MessageKind::INVACK) {
                 entry->presence[request->src] = false;
@@ -137,14 +128,12 @@ void DirectoryController::MSI_tick() {
                         entry->dirty = true;
                         entry->state = DirState::M;
                     } else {
-                        request_in_progress = true;
-                        response_time = current_clock_ + settings_.mem_latency;
-                        target_node   = entry->req_node_in_transient;
-                        tag_to_send   = entry->block_id;
                         entry->presence[entry->req_node_in_transient] = true;
                         ++entry->active_sharers;
                         entry->state = DirState::M;
                         entry->dirty = true;
+                        schedule_data_response(entry->block_id,
+                                               entry->req_node_in_transient);
                     }
                 }
                 dequeue();
@@ -161,7 +150,7 @@ void DirectoryController::MSI_tick() {
     }
 
     if (request_in_progress && current_clock_ >= response_time) {
-        ++stats_.memory_reads;
+        if (pending_lls_miss) ++stats_.memory_reads;
         send_Request(target_node, tag_to_send, MessageKind::DATA);
         request_in_progress = false;
     }

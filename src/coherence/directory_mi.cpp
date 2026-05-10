@@ -17,13 +17,10 @@ void DirectoryController::MI_tick() {
             if (handle_writeback(entry, *request)) {
                 // already dequeued / cycled; fall through to mem-response.
             } else if (entry->state == DirState::I && request->kind == MessageKind::GETM) {
-                request_in_progress = true;
-                tag_to_send   = request->block;
-                target_node   = request->src;
-                response_time = current_clock_ + settings_.mem_latency;
                 entry->state  = DirState::M;
                 entry->presence[request->src] = true;
                 ++entry->active_sharers;
+                schedule_data_response(request->block, request->src);
                 dequeue();
             } else if (entry->state == DirState::M && request->kind == MessageKind::GETM) {
                 tag_to_send = request->block;
@@ -56,7 +53,10 @@ void DirectoryController::MI_tick() {
     }
 
     if (request_in_progress && current_clock_ >= response_time) {
-        ++stats_.memory_reads;
+        // pending_lls_miss is set by schedule_data_response: true when
+        // the response went off-chip to memory, false when satisfied
+        // by an LLS hit. Charge memory_reads only on the off-chip path.
+        if (pending_lls_miss) ++stats_.memory_reads;
         send_Request(target_node, tag_to_send, MessageKind::DATA);
         request_in_progress = false;
     }

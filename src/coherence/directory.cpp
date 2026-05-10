@@ -38,7 +38,15 @@ const char* dir_state_str(DirState s) {
 DirectoryController::DirectoryController(NodeId id,
                                          const Settings& s,
                                          CoherenceStats& stats)
-    : id_(id), settings_(s), stats_(stats) {}
+    : id_(id),
+      settings_(s),
+      stats_(stats),
+      // LLS sized from Settings. In private_l2 mode lls_blocks=0
+      // and the cache is "disabled" -- every access misses with no
+      // install, so the directory's data-response path collapses to
+      // the legacy "always charge mem_latency" behavior.
+      lls(s.cache_mode == CacheMode::SharedLls ? s.lls_blocks : 0,
+          s.cache_mode == CacheMode::SharedLls ? s.lls_assoc  : 0) {}
 
 DirectoryController::~DirectoryController() {
     for (auto& kv : directory_) delete kv.second;
@@ -146,5 +154,55 @@ bool DirectoryController::handle_writeback(DirEntry* entry,
 
 // All five per-protocol *_tick() implementations live in
 // directory_<protocol>.cpp now (Steps 4-8 complete).
+
+void DirectoryController::schedule_data_response(BlockId block, NodeId target) {
+    request_in_progress = true;
+    target_node         = target;
+    tag_to_send         = block;
+
+    if (settings_.cache_mode != CacheMode::SharedLls) {
+        // Private-L2 mode: directory has no LLS to consult. Behavior
+        // matches the legacy code byte-for-byte: response in mem_latency
+        // cycles, charge memory_reads at response time.
+        response_time    = current_clock_ + settings_.mem_latency;
+        pending_lls_miss = true;
+        return;
+    }
+
+    ++stats_.lls_accesses;
+    auto r = lls.access(block);
+    if (r.hit) {
+        ++stats_.lls_hits;
+        response_time    = current_clock_ + settings_.lls_hit_latency;
+        pending_lls_miss = false;
+        return;
+    }
+    // LLS miss + install. Charge mem_latency and remember to count
+    // memory_reads at response time. Capacity eviction (if any) under
+    // inclusive policy must back-invalidate the victim's sharers so the
+    // L1s can't keep a copy of a line the LLS no longer covers.
+    ++stats_.lls_misses;
+    response_time    = current_clock_ + settings_.mem_latency;
+    pending_lls_miss = true;
+
+    if (r.evicted) {
+        ++stats_.lls_evictions;
+        // v0 simplification: LLS evictions do NOT trigger back-invalidates
+        // to L1 holders. The agents (MSI/MESI/MOSI/MOESIF) currently
+        // don't accept REQ_INVALID in non-S states, and a strict
+        // inclusive policy would need either a new "back-invalidate"
+        // message kind or per-agent extensions to recognize it -- both
+        // are out of scope for v0. The LLS therefore acts as a soft
+        // residency cache: hits on resident blocks save mem_latency vs.
+        // lls_hit_latency; evictions silently drop the LLS entry while
+        // L1 copies persist. The directory protocol stays correct
+        // because per-line state is held in the directory entry, not in
+        // the LLS itself; the LLS only accelerates the data-response
+        // path. Strict-inclusion back-invalidates land in a follow-up;
+        // see report_doc/10 "non-inclusive baseline + back-invalidate
+        // upgrade path" for the planned mechanism.
+        (void)r.victim;
+    }
+}
 
 } // namespace comparch::coherence
