@@ -59,7 +59,7 @@ namespace {
 // outliers that don't even fit in 30 min wallclock. The "real" fix is
 // either heterogeneous traces or a finer-grained no-progress watchdog;
 // this constant stays at 50M for routine harness use.
-constexpr coherence::Timestamp kGlobalCap = 100'000'000;
+constexpr coherence::Timestamp kGlobalCap = 60'000'000;
 
 // Per-core ownership pack. The Network holds non-owning pointers into
 // these (CoherenceAdapter as CpuPort, adapter->coh_cache() as the
@@ -846,12 +846,29 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
 
     coherence::Timestamp clock = 0;
     bool completed = false;
+    // Grace cycles for net.is_done() to drain after every core has gone
+    // idle. On heterogeneous real-trace runs an outstanding coherence
+    // transaction can keep is_done() false even after all cores hit EOF
+    // and drained their queues; without a cap the loop would spin until
+    // kGlobalCap, producing no report.
+    constexpr coherence::Timestamp kPostIdleGrace = 10'000;
+    coherence::Timestamp post_idle = 0;
     while (true) {
         bool any_core_running = false;
         for (auto& cs : stack_owners) {
             if (cs->core->tick()) any_core_running = true;
         }
         if (!any_core_running && net.is_done()) { completed = true; break; }
+        if (!any_core_running) {
+            if (++post_idle >= kPostIdleGrace) {
+                LOG_ERROR("full mode: all cores idle for " << post_idle
+                          << " cycles but net.is_done()=false at "
+                          << clock << "; exiting with partial network state");
+                break;
+            }
+        } else {
+            post_idle = 0;
+        }
         net.tick(clock);
         net.tock();
         ++clock;
