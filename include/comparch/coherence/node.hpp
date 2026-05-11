@@ -66,8 +66,9 @@ public:
 private:
     NodeId           id_;
     bool             is_dir_;
-    CpuPort*         cpu_;     // nullable; not owned. FiciCpu (Phase 5A) or
-                               // CoherenceAdapter (Phase 5B).
+    CpuPort*         cpu_;     // nullable; not owned. FiciCpu (in
+                               // --mode coherence) or CoherenceAdapter
+                               // (full mode).
     Cache*           cache_;   // nullable; not owned
     std::unique_ptr<DirectoryController> dir_;   // owned
     Network*         ntwk_;

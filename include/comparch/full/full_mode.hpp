@@ -6,8 +6,9 @@
 namespace comparch::full {
 
 // Default-mode driver: builds N OoO cores, each with private L1+L2,
-// connected through the Phase 5A coherence ring, and runs them until
-// every core's per-core ChampSim trace is exhausted.
+// connected through the coherence ring, and runs them until every
+// core's per-core trace is exhausted (or every thread in the program
+// manifest, when --program is used).
 //
 // Returns 0 on success, 2 on config error, 4 on trace error, 5 on
 // global cycle cap (deadlock).

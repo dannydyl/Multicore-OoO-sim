@@ -10,9 +10,8 @@
 //   ALU   1-stage,  fires single-cycle. project2's ALU_t.
 //   MUL   3-stage pipelined, no stalls. project2's MUL_t.
 //   LSU   variable-latency for loads (cache-driven), 1-cycle for stores.
-//         The OoO core's LSU now consults the L1-D MSHR via cache::Cache
-//         (Phase 4), replacing project2's pre-baked left_cycles counter
-//         that read from the trace's dcache_hit field.
+//         The LSU consults the L1-D MSHR via cache::Cache rather than
+//         relying on a per-record dcache_hit field in the trace.
 
 #include <array>
 #include <cstdint>
@@ -37,8 +36,8 @@ struct MulUnit {
 
 // LSU. For loads, `mshr_id` indexes into l1d's MSHR table; the exec
 // stage polls Cache::peek(mshr_id) and completes when ready==true. For
-// stores, mshr_id is unused (store completes synchronously on issue,
-// matching project2 — store-buffer / TSO is a Phase 5+ concern).
+// stores, mshr_id is unused (store completes synchronously on issue;
+// store-buffer / TSO is a documented limitation, not modeled).
 struct LsuUnit {
     bool          busy      = false;
     bool          is_load   = false;

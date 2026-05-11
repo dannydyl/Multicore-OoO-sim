@@ -488,8 +488,8 @@ std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
     // merged secondary is not double-counted as a separate miss and
     // inherits the primary's due_cycle.
     //
-    // Phase 5B: writes are NOT eligible to merge onto a read primary —
-    // a write piggybacking a read primary would inherit the primary's
+    // Writes are NOT eligible to merge onto a read primary — a
+    // write piggybacking a read primary would inherit the primary's
     // (clean) AccessResult and skip the dirty-bit mutation that
     // access() would otherwise apply. Force writes to allocate a
     // fresh slot (which goes through access() below).
@@ -515,10 +515,11 @@ std::optional<std::uint64_t> Cache::issue(const MemReq& req) {
     }
 
     const AccessResult result = access(req);
-    // Phase 5B: a coherence-managed miss returns latency=∞ as the
-    // sentinel for "external completion." Park the MSHR with
-    // due_cycle = UINT64_MAX so MSHR::tick never auto-flips ready;
-    // CoherenceAdapter calls Cache::mark_ready(id) from on_data_arrival.
+    // A coherence-managed miss returns latency=∞ as the sentinel
+    // for "external completion." Park the MSHR with due_cycle =
+    // UINT64_MAX so MSHR::tick never auto-flips ready;
+    // CoherenceAdapter calls Cache::mark_ready(id) when the line
+    // arrives.
     const bool suspended = (result.latency == kCoherenceSuspendedLatency);
     const std::uint64_t due_cycle =
         suspended ? UINT64_MAX : (now_ + result.latency);

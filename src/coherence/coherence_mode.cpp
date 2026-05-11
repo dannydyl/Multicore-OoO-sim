@@ -73,8 +73,8 @@ int run_coherence_mode(const SimConfig& cfg, const CliArgs& cli) {
     }
     if (cfg.interconnect.topology != "ring") {
         LOG_ERROR("interconnect.topology=" << cfg.interconnect.topology
-                  << " is not supported in Phase 5A "
-                     "(only 'ring'; 'xbar' is deferred)");
+                  << " is not supported (only 'ring'; 'xbar' is not "
+                     "implemented and is a documented limitation)");
         return 2;
     }
     if (cfg.cores <= 0) {

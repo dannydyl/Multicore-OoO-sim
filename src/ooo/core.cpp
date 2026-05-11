@@ -256,9 +256,9 @@ void OooCore::stage_exec() {
     }
 
     // ----- LSU -----
-    // Phase 5B: BOTH loads and stores poll the L1-D MSHR. Stores no
-    // longer complete in one cycle because under coherence they may
-    // need to acquire M-state via the directory.
+    // BOTH loads and stores poll the L1-D MSHR. Stores can't
+    // complete in one cycle under coherence — they may need to
+    // acquire M-state via the directory.
     for (auto& u : lsu_) {
         if (!u.busy) continue;
 
@@ -410,11 +410,12 @@ void OooCore::stage_schedule() {
             u.is_load   = (oldest->inst.opcode == Opcode::Load);
             u.sched_ptr = oldest;
 
-            // Phase 5B: BOTH loads and stores go through the async
-            // issue/peek/complete MSHR path. Stores can't synchronously
-            // complete under coherence — a store needs M-state, which
-            // may require a network round-trip. The store completion
-            // logic in stage_exec polls the same way as loads.
+            // BOTH loads and stores go through the async
+            // issue/peek/complete MSHR path. Stores can't
+            // synchronously complete under coherence — a store
+            // needs M-state, which may require a network round-trip.
+            // The store completion logic in stage_exec polls the
+            // same way as loads.
             cache::MemReq req{};
             req.addr           = oldest->inst.mem_addr;
             req.op             = u.is_load ? cache::Op::Read : cache::Op::Write;

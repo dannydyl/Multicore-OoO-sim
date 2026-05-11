@@ -6,7 +6,7 @@
 // (`coherence::CoherenceAdapter`); this header stays in the cache module
 // to avoid pulling coherence headers into every Cache consumer.
 //
-// Phase 5B contract:
+// Contract:
 //   on_miss   — called from Cache::access() / Cache::issue() on a tag
 //               miss when coherence_sink is wired. The sink is
 //               responsible for translating the miss into a network

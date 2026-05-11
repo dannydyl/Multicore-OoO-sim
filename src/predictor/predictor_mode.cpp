@@ -5,8 +5,8 @@
 // accuracy / mispredictions / MPKI at the end.
 //
 // The walk loop is deliberately a single-record-at-a-time pass: predict,
-// compare against ground truth, train. No pipeline, no lookahead, no FIFO —
-// any timing nuance belongs in Phase 4 (the OoO core), not here.
+// compare against ground truth, train. No pipeline, no lookahead, no
+// FIFO — any timing nuance belongs in the OoO core, not here.
 
 #include "comparch/predictor/predictor_mode.hpp"
 

@@ -17,7 +17,7 @@ Node::Node(NodeId id, bool is_dir,
            Network* ntwk)
     : id_(id), is_dir_(is_dir), cpu_(cpu), cache_(cache),
       dir_(std::move(dir)), ntwk_(ntwk) {
-    // RING_TOP only in Phase 5A — XBAR rejected at coherence_mode entry.
+    // RING topology only. XBAR is rejected at coherence_mode entry.
     num_ports = 2;
     outgoing_packets.assign(num_ports, nullptr);
     incoming_packets.assign(num_ports, nullptr);

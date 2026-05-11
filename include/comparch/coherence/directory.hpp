@@ -1,15 +1,11 @@
 #pragma once
 
-// Directory controller. Mirrors
-// project3/coherence/directory/Directory_Controller.h.
-//
-// Phase 5A: structural port — request queues, get_entry, poll/dequeue/
-// cycle_queue/send_Request, and a tick() that dispatches by protocol.
-// The per-protocol *_tick() methods are filled in incrementally
-// (Step 4 = MSI, Step 5 = MI, Step 6 = MESI, Step 7 = MOSI, Step 8 =
-// MOESIF). The "send_E / send_F" handshake and the directory-entry
-// presence vectors are kept here verbatim because every protocol's
-// tick depends on them.
+// Directory controller. Holds per-block coherence state for all
+// resident lines (presence vectors, dirty bit, transient state) and
+// dispatches to per-protocol *_tick() implementations
+// (directory_<protocol>.cpp). The "send_E / send_F" handshake
+// fields plus the kMaxSharers presence vector are referenced by
+// every protocol's tick.
 
 #include <cstdint>
 #include <list>
@@ -95,19 +91,20 @@ public:
     void      send_Request(NodeId dest, BlockId tag, MessageKind kind,
                            bool dirty = false);
 
-    // Phase 5B: an L1+L2 in a real CMP can self-evict. The
-    // CoherenceAdapter sends DATA_WB (= "WRITEBACK") on any eviction;
-    // this helper folds in protocol-agnostic bookkeeping (memory_writes
-    // for dirty drops, presence-bit clear, state collapse to I when the
+    // An L1+L2 in a real CMP can self-evict. The CoherenceAdapter
+    // sends DATA_WB (= "WRITEBACK") on any eviction; this helper
+    // folds in protocol-agnostic bookkeeping (memory_writes for
+    // dirty drops, presence-bit clear, state collapse to I when the
     // last sharer leaves). Returns true if the message was consumed
     // (dequeued or cycled). All protocol ticks call this first.
     bool handle_writeback(DirEntry* entry, const Message& request);
 
-    // Phase 6: schedule a directory-driven DATA response for `target` at
-    // `block`. Consults the LLS (when active): on hit, response is fast
-    // (lls_hit_latency); on miss, response charges mem_latency and the
-    // block is installed in LLS, possibly back-invalidating sharers of
-    // the victim block under inclusive policy.
+    // Schedule a directory-driven DATA response for `target` at
+    // `block`. Consults the LLS (when active): on hit, response is
+    // fast (lls_hit_latency); on miss, response charges mem_latency
+    // and the block is installed in LLS. Strict inclusive policy
+    // (back-invalidate on LLS eviction) is not yet implemented; the
+    // current data path is NINE.
     //
     // In private_l2 mode the LlsCache is disabled (size=0), so every
     // call misses with no install -- response_time = mem_latency, no

@@ -1,9 +1,10 @@
 #pragma once
 
-// Per-node coherence cache. Phase 5A models project3's unbounded
-// state table (block-keyed unordered_map of agent state) — no eviction,
-// no LRU, no MSHR, no hit latency. The Phase 2 finite cache::Cache will
-// be layered underneath in Phase 5B alongside the OoO core.
+// Per-node coherence cache: an unbounded state table (block-keyed
+// unordered_map of agent state) — no eviction, no LRU, no MSHR, no
+// hit latency. Acts as the per-block protocol state machine; the
+// finite cache::Cache is layered above it (one per core, wired
+// through CoherenceAdapter).
 //
 // Mirrors project3/simulator/cache.h: holds two single-slot incoming
 // buffers (cpu_in_next/cpu_in for the CPU side, ntwk_in_next/ntwk_in
@@ -44,7 +45,7 @@ public:
 
     NodeId id() const { return id_; }
 
-    // Phase 5A messaging surface (mirrors project3 raw-pointer queues).
+    // Messaging surface (single-slot incoming buffers per direction).
     Message* cpu_in_next  = nullptr;
     Message* cpu_in       = nullptr;
     Message* ntwk_in_next = nullptr;

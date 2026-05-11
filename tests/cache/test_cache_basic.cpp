@@ -255,11 +255,11 @@ TEST_CASE("Cache::issue does not mutate cache state when MSHR is full",
 
 TEST_CASE("Cache::issue accepts Write but never merges them",
           "[cache][mshr][precondition]") {
-    // Phase 5B: writes go through the async issue/peek/complete path
-    // (the OoO core's stage_schedule LSU section uses it for both
-    // loads and stores under coherence). The merge fast-path is still
-    // disabled for writes — a Write piggybacking on a Read primary
-    // would inherit the primary's clean AccessResult and skip the
+    // Writes go through the async issue/peek/complete path (the
+    // OoO core's stage_schedule LSU section uses it for both loads
+    // and stores under coherence). The merge fast-path is disabled
+    // for writes — a Write piggybacking on a Read primary would
+    // inherit the primary's clean AccessResult and skip the
     // dirty-bit mutation. Verify writes always allocate fresh slots.
     Cache l1(small_l1(), "L1");
     auto a = l1.issue({0x1000, Op::Read});

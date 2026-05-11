@@ -24,11 +24,11 @@
 //            outcome and the history register shifts the actual outcome in
 //            (drop high bit, shift left, OR in the new bit).
 //
-// Ported from project2_v2.1.0_all/branchsim.cpp:27-168. The only structural
-// change is dropping project2's YP_FIFO, which existed to delay PT updates
-// across a fake pipeline. --mode predictor predicts and updates synchronously
-// on the same record, so the FIFO is dead weight; Phase 4 will reintroduce
-// any required delay at the OoO layer.
+// The original project2 implementation had a YP_FIFO that delayed
+// PT updates across a fake pipeline. --mode predictor predicts and
+// updates synchronously on the same record, so the FIFO was dead
+// weight and was dropped. The OoO core's retire stage trains the
+// predictor at retire time, which provides the actual delay.
 
 #include "comparch/predictor/predictor.hpp"
 #include "comparch/predictor/saturating_counter.hpp"

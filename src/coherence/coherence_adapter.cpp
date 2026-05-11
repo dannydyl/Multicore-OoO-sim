@@ -137,10 +137,9 @@ void CoherenceAdapter::tick() {
         if (l2d_) cache_fill(*l2d_, cache_block, /*rw=*/'R');
         cache_fill(*l1d_, cache_block, /*rw=*/was_store ? 'W' : 'R');
 
-        // Wake every L1 (and L2) MSHR entry that was parked on this
-        // block. Phase 5B's L2 has no MSHR yet, but mark_block_ready is
-        // a no-op for empty MSHR tables. In shared_lls mode there is
-        // no L2.
+        // Wake every L1 (and L2) MSHR entry parked on this block.
+        // L2 has no MSHR today, but mark_block_ready is a no-op for
+        // empty MSHR tables. In shared_lls mode there is no L2.
         mark_block_ready(*l1d_, cache_block);
         if (l2d_) mark_block_ready(*l2d_, cache_block);
 

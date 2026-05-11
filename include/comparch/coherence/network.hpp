@@ -23,19 +23,21 @@ namespace comparch::coherence {
 
 class Network {
 public:
-    // Phase 5A constructor: builds N FiciCpu + N coherence::Cache nodes
-    // from a per-core text trace directory.
+    // Standalone constructor (used by --mode coherence): builds N
+    // FiciCpu + N coherence::Cache nodes from a per-core text trace
+    // directory. Network owns everything it builds.
     Network(const Settings& s,
             CoherenceStats& stats,
             const std::filesystem::path& trace_dir,
             AgentFactory agent_factory);
 
-    // Phase 5B constructor: caller has already built the per-node
-    // (CpuPort, coherence::Cache) pairs (e.g. CoherenceAdapter wrapping
-    // an OoO core) and the DirectoryController. Network just stitches
-    // them into the ring. Per-node objects must outlive the Network;
-    // the Network owns only the Nodes themselves and the directory
-    // controller it was given.
+    // Embedded constructor (used by full mode): caller has already
+    // built the per-node (CpuPort, coherence::Cache) pairs (e.g.
+    // CoherenceAdapter wrapping an OoO core) and the
+    // DirectoryController. Network just stitches them into the
+    // ring. Per-node objects must outlive the Network; the Network
+    // owns only the Nodes themselves and the directory controller
+    // it was given.
     struct CpuNode {
         CpuPort* cpu;
         Cache*   cache;
@@ -58,8 +60,8 @@ public:
     void tock();
 
 private:
-    // Phase 5A path owns FiciCpu / coherence::Cache instances; Phase 5B
-    // path leaves these empty (the caller owns them).
+    // Standalone path owns FiciCpu / coherence::Cache instances;
+    // embedded path leaves these empty (the caller owns them).
     std::vector<std::unique_ptr<FiciCpu>> cpus_;
     std::vector<std::unique_ptr<Cache>>   caches_;
     std::vector<std::unique_ptr<Node>>    nodes_;

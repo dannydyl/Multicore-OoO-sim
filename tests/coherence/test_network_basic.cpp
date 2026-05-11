@@ -1,7 +1,7 @@
-// Structural tests for the Phase 5A coherence scaffolding (no protocol
-// agents wired). Verifies that an empty per-core trace dir reaches
-// is_done() at construction, that Message ctor sizes flits per the
-// settings, and that Network ticks safely with a null agent factory.
+// Structural tests for the coherence scaffolding (no protocol agents
+// wired). Verifies that an empty per-core trace dir reaches is_done()
+// at construction, that Message ctor sizes flits per the settings,
+// and that Network ticks safely with a null agent factory.
 
 #include <catch2/catch_test_macros.hpp>
 

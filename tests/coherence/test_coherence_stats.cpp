@@ -86,7 +86,7 @@ TEST_CASE("print_stats matches project3 MSI core_4 stats verbatim",
     REQUIRE(os.str() == expected);
 }
 
-TEST_CASE("print_stats handles all-zero counters (Phase 5A skeleton path)",
+TEST_CASE("print_stats handles all-zero counters (skeleton path)",
           "[coherence][stats]") {
     CoherenceStats s;     // all zero
     std::ostringstream os;

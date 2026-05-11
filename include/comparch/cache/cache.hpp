@@ -49,10 +49,10 @@ public:
 
         Cache*         next_level     = nullptr;
         MainMemory*    main_memory    = nullptr;
-        // Phase 5B: when set, L1 misses and dirty evictions that would
-        // otherwise hit `next_level`/`main_memory` route through this
-        // sink instead. Used by the multi-core driver to splice each
-        // L1's leaf into the coherence subsystem.
+        // When set, L1 misses and dirty evictions that would otherwise
+        // hit `next_level`/`main_memory` route through this sink
+        // instead. Used by the multi-core driver to splice each L1's
+        // leaf into the coherence subsystem.
         CoherenceSink* coherence_sink = nullptr;
 
         // Prefetcher attached to this level. Invoked after demand misses.
@@ -91,7 +91,7 @@ public:
     void                         complete(std::uint64_t id);
     void                         tick();
 
-    // Phase 5B: coherence-driven external completion. mark_ready flips the
+    // Coherence-driven external completion. mark_ready flips the
     // ready bit on an MSHR slot whose due_cycle was set to UINT64_MAX
     // (the sentinel used when a coherence_sink takes ownership of the
     // miss path). coherence_invalidate drops the block silently if

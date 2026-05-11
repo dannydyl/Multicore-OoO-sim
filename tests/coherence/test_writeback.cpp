@@ -1,9 +1,8 @@
-// Phase 5B: targeted DirectoryController::handle_writeback tests for
-// each of the 5 protocols. These verify that an unsolicited DATA_WB
-// from a sharer (a) drops the presence bit, (b) increments
-// memory_writes only when the dropping core was the dirty owner, and
-// (c) collapses the directory state correctly when the last sharer
-// leaves.
+// Targeted DirectoryController::handle_writeback tests for each of
+// the 5 protocols. These verify that an unsolicited DATA_WB from a
+// sharer (a) drops the presence bit, (b) increments memory_writes
+// only when the message's source-dirty flag is set, and (c) collapses
+// the directory state correctly when the last sharer leaves.
 
 #include <catch2/catch_test_macros.hpp>
 

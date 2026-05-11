@@ -189,28 +189,27 @@ void DirectoryController::schedule_data_response(BlockId block, NodeId target) {
     }
     // LLS miss + install. Charge mem_latency and remember to count
     // memory_reads at response time. Capacity eviction (if any) under
-    // inclusive policy must back-invalidate the victim's sharers so the
-    // L1s can't keep a copy of a line the LLS no longer covers.
+    // inclusive policy WOULD back-invalidate the victim's sharers
+    // so the L1s can't keep a copy of a line the LLS no longer
+    // covers — but the current data path is non-inclusive
+    // non-exclusive (NINE), so we don't.
     ++stats_.lls_misses;
     response_time    = current_clock_ + settings_.mem_latency;
     pending_lls_miss = true;
 
     if (r.evicted) {
         ++stats_.lls_evictions;
-        // v0 simplification: LLS evictions do NOT trigger back-invalidates
-        // to L1 holders. The agents (MSI/MESI/MOSI/MOESIF) currently
-        // don't accept REQ_INVALID in non-S states, and a strict
-        // inclusive policy would need either a new "back-invalidate"
-        // message kind or per-agent extensions to recognize it -- both
-        // are out of scope for v0. The LLS therefore acts as a soft
-        // residency cache: hits on resident blocks save mem_latency vs.
-        // lls_hit_latency; evictions silently drop the LLS entry while
-        // L1 copies persist. The directory protocol stays correct
-        // because per-line state is held in the directory entry, not in
-        // the LLS itself; the LLS only accelerates the data-response
-        // path. Strict-inclusion back-invalidates land in a follow-up;
-        // see report_doc/10 "non-inclusive baseline + back-invalidate
-        // upgrade path" for the planned mechanism.
+        // NINE policy: LLS evictions do NOT trigger back-invalidates
+        // to L1 holders. The LLS acts as a soft residency cache:
+        // hits on resident blocks save mem_latency vs lls_hit_latency;
+        // evictions silently drop the LLS entry while L1 copies
+        // persist. The directory protocol stays correct because per-
+        // line state is held in the directory entry, not in the LLS
+        // itself; the LLS only accelerates the data-response path.
+        // Strict-inclusive back-invalidates would need a new
+        // back-invalidate message kind plus per-agent handling for
+        // non-S states — see config.hpp inclusion enum, which
+        // rejects 'inclusive' until that lands.
         (void)r.victim;
     }
 }

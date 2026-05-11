@@ -1,5 +1,5 @@
-// Phase 5B CLI smoke tests: confirm "full" is no longer a valid --mode
-// keyword, default invocation routes to Mode::Full, and parse_mode("full")
+// CLI smoke tests: confirm "full" is no longer a valid --mode keyword,
+// default invocation routes to Mode::Full, and parse_mode("full")
 // still works internally for round-trip tests.
 
 #include <catch2/catch_test_macros.hpp>

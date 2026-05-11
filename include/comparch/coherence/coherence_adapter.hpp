@@ -1,8 +1,8 @@
 #pragma once
 
-// Per-core shim that splices a finite cache::Cache (Phase 2) into the
-// coherence ring (Phase 5A). One adapter per core; the L2 cache holds
-// it as `cfg.coherence_sink`, the ring node holds it as `CpuPort*`.
+// Per-core shim that splices a finite cache::Cache into the coherence
+// ring. One adapter per core; the L2 cache holds it as
+// `cfg.coherence_sink`, the ring node holds it as `CpuPort*`.
 //
 // Responsibilities:
 //   - on_miss   (CoherenceSink, fired by L2 on a tag miss): translate
@@ -55,9 +55,9 @@ public:
 
     NodeId id() const { return id_; }
 
-    // The wrapped Phase 5A coherence cache (per-block agent state map).
-    // Owned by the adapter; passed to the Network as the `cache` half
-    // of CpuNode in run_full_mode.
+    // The wrapped coherence cache (per-block agent state map).
+    // Owned by the adapter; passed to the Network as the `cache`
+    // half of CpuNode in run_full_mode.
     Cache* coh_cache() { return coh_cache_.get(); }
 
     // === cache::CoherenceSink ===

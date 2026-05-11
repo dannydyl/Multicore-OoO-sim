@@ -17,15 +17,18 @@ enum class Protocol { MI, MSI, MESI, MOSI, MOESIF };
 Protocol parse_protocol(const std::string& s);
 const char* protocol_label(Protocol p);   // "MSI_PRO", "MESI_PRO", ...
 
-// Cache-hierarchy topology. PrivateL2 is the original Phase 5B design;
-// SharedLls is the Phase 6 hybrid (per-core L1 + shared LLS with
-// directory inside it).
+// Cache-hierarchy topology. PrivateL2 = per-core L1 + per-core L2.
+// SharedLls = per-core L1 + a single shared LLS with the directory
+// embedded in it.
 enum class CacheMode { PrivateL2, SharedLls };
 CacheMode parse_cache_mode(const std::string& s);
 const char* cache_mode_label(CacheMode m);   // "private_l2" / "shared_lls"
 
 // LLS inclusion policy. Only meaningful when cache_mode = SharedLls.
-// Inclusive is the v0 baseline; non-inclusive is reserved for follow-up.
+// NonInclusive is the working path (NINE — LLS evictions do not
+// back-invalidate L1 holders). Inclusive is reserved for a future
+// implementation of back-invalidate and is rejected at config-load
+// time today (see full_mode.cpp to_settings()).
 enum class Inclusion { Inclusive, NonInclusive };
 Inclusion parse_inclusion(const std::string& s);
 const char* inclusion_label(Inclusion p);
@@ -41,8 +44,9 @@ struct Settings {
     std::size_t payload_flits  = 0;    // 1 << (block_size_log2 - link_width_log2)
     // Cache topology + LLS inclusion. PrivateL2/Inclusive defaults keep
     // existing configs running unchanged. The shared_lls data path is
-    // built in Phase 2+; selecting it before then will trigger an
-    // explicit "not yet implemented" runtime error in full mode.
+    // The shared-LLS data path is fully wired; selecting it with
+    // inclusion=Inclusive triggers an explicit "not yet implemented"
+    // runtime error from full_mode (back-invalidate path is missing).
     CacheMode cache_mode = CacheMode::PrivateL2;
     Inclusion inclusion  = Inclusion::Inclusive;
     // LLS geometry, only meaningful when cache_mode == SharedLls.

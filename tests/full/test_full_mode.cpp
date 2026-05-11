@@ -1,8 +1,8 @@
-// Phase 5B integration tests: drive run_full_mode end-to-end with
-// generated per-core ChampSim binary traces. These are smoke tests that
-// the full pipeline runs without deadlock and retires the right number
-// of instructions; cycle counts and IPC are not pinned (different cache
-// hierarchy than project3, no parity bar).
+// Integration tests: drive run_full_mode end-to-end with generated
+// per-core ChampSim binary traces and CasimV2 program manifests.
+// Smoke tests that the full pipeline runs without deadlock and
+// retires the right number of instructions; cycle counts and IPC
+// are not pinned because they shift with cache/predictor knobs.
 
 #include <catch2/catch_test_macros.hpp>
 

@@ -14,8 +14,9 @@
 // "is this block on-chip?" and tracks LRU + evictions. A purpose-built
 // class is ~150 lines vs. wrapping cache::Cache's ~600.
 //
-// Phase 2 only. Snoop-filter side (asking the LLS "would any L1 hit
-// on a snoop?") layers on top in Phase 3.
+// Snoop-filter side (asking the LLS "would any L1 hit on a snoop?")
+// is a future addition; the directory does its own sharer tracking
+// today.
 
 #include <cstdint>
 #include <list>

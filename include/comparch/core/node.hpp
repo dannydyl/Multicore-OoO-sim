@@ -1,3 +1,5 @@
 #pragma once
 
-// Phase 5: Node = OoO core + private L1/L2 + coherence agent. Arrives here.
+// Reserved header. The per-core stack (OoO core + private L1/L2 +
+// coherence agent + adapter) is assembled in full_mode.cpp's
+// CoreStack — there's no standalone Node abstraction.

@@ -20,7 +20,7 @@ constexpr int kOpBranch = 6;
 // Project2 marks an unused register slot with -1 (or 0 in some traces). We
 // mirror ChampSim convention: unused slots are 0. Anything outside the byte
 // range is clamped to 0 too — the new sim ignores those fields for predictor
-// regression and the OoO core (Phase 4) will repopulate them properly.
+// regression and the OoO core will repopulate them properly.
 std::uint8_t reg_to_byte(int r) {
     if (r <= 0 || r > 255) return 0;
     return static_cast<std::uint8_t>(r);

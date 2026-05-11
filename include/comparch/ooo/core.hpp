@@ -3,22 +3,22 @@
 // OooCore — single-core out-of-order pipeline.
 // =============================================
 // Reverse-stage cycle: retire -> exec -> schedule -> dispatch -> fetch.
-// Direct port of project2's procsim.cpp do_cycle (lines 948-1000), now
-// driving a real predictor (Phase 3 BranchPredictor) and a real L1-D
-// cache via Cache::issue / peek / complete (Phase 4 MSHR API).
+// Drives a real branch predictor and a real L1-D cache via
+// Cache::issue / peek / complete (MSHR-aware async path).
 //
-// Phase 4 simplifications relative to project2:
-//   - Idealized I-cache (every fetch is 1 cycle). project2's
-//     `misses_enabled=false` mode worked the same way; an I-cache MSHR
-//     can be plugged in later.
+// Known limitations (documented, not bugs):
+//   - Idealized I-cache (every fetch is 1 cycle). An I-cache MSHR
+//     could be added later.
 //   - Predictor uses synchronous predict(at-fetch) / update(at-retire).
-//     No speculative checkpoint (predict() is read-only across all four
-//     predictors, so wrong-path branches simply never reach retire and
-//     never train the predictor).
-//   - Stores complete via Cache::access() (synchronous round-trip);
-//     no store buffer.
-//   - MUL opcode never produced by the ChampSim classifier; MUL FUs
-//     sit unused unless a PC-bin heuristic is added later.
+//     No speculative checkpoint — predict() is read-only across all
+//     four predictors, so wrong-path branches never reach retire and
+//     never train the predictor.
+//   - Stores complete via the same MSHR path as loads under
+//     coherence; no separate store buffer / TSO model.
+//   - MUL opcode is only emitted for CasimV2 records with the
+//     is_mul hint set. ChampSim traces (no opcode class) never
+//     produce MUL, so the MUL FUs go unused under ChampSim-only
+//     workloads.
 
 #include <cstddef>
 #include <cstdint>

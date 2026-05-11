@@ -1,6 +1,6 @@
-// LlsCache unit tests. Phase 2 only exercises hit/miss/LRU/eviction;
-// directory integration is tested by the existing scenario tests once
-// Phase 2c wires LlsCache into the directory.
+// LlsCache unit tests: hit/miss/LRU/eviction at the class level.
+// Directory-side integration (LLS consulted by schedule_data_response)
+// is exercised by the scenario tests in tests/coherence/.
 
 #include <catch2/catch_test_macros.hpp>
 

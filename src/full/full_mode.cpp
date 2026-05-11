@@ -1,5 +1,5 @@
-// Default-mode driver: N OoO cores, each with private L1+L2, ring-
-// connected through the Phase 5A coherence subsystem.
+// Default-mode driver: N OoO cores, each with private L1+L2,
+// ring-connected through the coherence subsystem.
 //
 // Per-cycle ordering:
 //   1. Tick every OoO core (which internally ticks its own L1).

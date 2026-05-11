@@ -1,12 +1,14 @@
-// Phase 5B: test the new CoherenceSink hook + mark_ready /
-// coherence_invalidate helpers on cache::Cache. Verifies that:
-//   - With a null sink, behavior is identical to Phase 4 (other tests
-//     already pin this; here we just sanity-check the no-op path).
+// Test the CoherenceSink hook + mark_ready / coherence_invalidate /
+// coherence_clean / coherence_set_dirty helpers on cache::Cache.
+// Verifies that:
+//   - With a null sink, behavior is the standard cache path (other
+//     tests already pin this; here we just sanity-check the no-op).
 //   - With a sink wired, a miss skips local fill and returns the
 //     suspended-latency sentinel.
 //   - mark_ready flips an MSHR slot's ready bit even though
 //     due_cycle = UINT64_MAX.
-//   - coherence_invalidate drops a resident block silently.
+//   - coherence_invalidate / coherence_clean / coherence_set_dirty
+//     do the right thing on resident-block transitions.
 //   - Dirty evictions call sink->on_evict; clean evictions still
 //     notify the sink (so directory presence can be cleared).
 
