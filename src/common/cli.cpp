@@ -38,6 +38,14 @@ CliParseResult parse_cli(int argc, char** argv) {
                    "and --trace-dir.")
         ->check(CLI::ExistingFile);
 
+    app.add_option("--program", a.program,
+                   "Multi-thread program manifest (CasimV2). Selects "
+                   "sync-aware replay: one .casim per thread, all wired "
+                   "through a shared SyncCoordinator. Manifest's "
+                   "thread_count must equal cores. Mutually exclusive "
+                   "with --trace / --trace-dir / --trace-list.")
+        ->check(CLI::ExistingFile);
+
     app.add_option("--out", a.out, "Write merged config JSON to this path");
 
     app.add_option("--cores", a.override_cores, "Override 'cores' from the config")
@@ -91,10 +99,10 @@ CliParseResult parse_cli(int argc, char** argv) {
     }
 
     const int trace_inputs = (a.trace ? 1 : 0) + (a.trace_dir ? 1 : 0) +
-                             (a.trace_list ? 1 : 0);
+                             (a.trace_list ? 1 : 0) + (a.program ? 1 : 0);
     if (trace_inputs > 1) {
-        std::cerr << "--trace, --trace-dir, and --trace-list are mutually "
-                     "exclusive\n";
+        std::cerr << "--trace, --trace-dir, --trace-list, and --program "
+                     "are mutually exclusive\n";
         r.should_exit = true;
         r.exit_code = 1;
     }

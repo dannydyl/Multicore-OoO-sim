@@ -45,6 +45,20 @@ Inst classify(const trace::Record& rec, std::uint64_t dyn_count) {
     inst.pc        = rec.ip;
     inst.dyn_count = dyn_count;
 
+    // Sync pseudo-record short-circuit. The Reader surfaces signal-side
+    // sync events (LockRelease, BarrierArrive, atomics) as Records with
+    // has_sync_token=true. These become zero-dep ALU placeholders that
+    // flow through the pipeline and deliver to SyncSink::notify_retire
+    // at retire time. No operands, no memory address.
+    if (rec.has_sync_token) {
+        inst.opcode         = Opcode::Alu;
+        inst.has_sync_token = true;
+        inst.sync_token     = rec.sync_token;
+        // dest/src1/src2 stay kNoReg, mem_addr stays 0 — sync
+        // pseudo-Insts must not create false dependencies.
+        return inst;
+    }
+
     // Opcode priority: BRANCH > STORE > LOAD > ALU. STORE wins over LOAD
     // for ChampSim records that somehow set both (rare; ChampSim itself
     // emits one or the other per record).

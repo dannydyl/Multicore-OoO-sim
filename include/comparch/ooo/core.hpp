@@ -73,10 +73,37 @@ struct OooStats {
     bool          deadlocked              = false;
     std::uint64_t stall_cycles_at_abort   = 0;
 
+    // ---- Utilization breakdown ---------------------------------
+    // Headline: useful_retire_cycles / cycles is the fraction of
+    // wall-clock cycles where at least one instruction committed.
+    // The fetch-* and retire-* counters split the remaining "no
+    // progress" cycles into causes so the user can see whether
+    // the pipeline is sync-bound, memory-bound, frontend-bound, etc.
+    //
+    // None of these are mutually exclusive with no_fire_cycles —
+    // they slice the same cycles by a different axis.
+    std::uint64_t useful_retire_cycles    = 0;  // \\geq 1 retire this cycle
+    // Fetch-side stall reasons (counted exactly once per cycle
+    // when stage_fetch fails to add any instruction to dispq):
+    std::uint64_t fetch_stall_sync        = 0;  // SyncCoordinator rejected
+    std::uint64_t fetch_stall_dispq_full  = 0;  // dispq at capacity
+    std::uint64_t fetch_stall_mispred     = 0;  // in_mispred recovery
+    std::uint64_t fetch_stall_eof         = 0;  // trace exhausted
+    // Retire-side stall reasons (counted exactly once per cycle
+    // when stage_state_update retires 0 instructions):
+    std::uint64_t retire_stall_rob_empty  = 0;  // nothing to retire
+    std::uint64_t retire_stall_head_busy  = 0;  // head not ready (memory etc.)
+    // Per-FU "busy this cycle" sums. A cycle counted once per
+    // busy FU, so alu_busy_sum / (cycles * alu_fus) is per-ALU util.
+    std::uint64_t alu_busy_sum            = 0;
+    std::uint64_t mul_busy_sum            = 0;
+    std::uint64_t lsu_busy_sum            = 0;
+
     double ipc()        const { return cycles ? static_cast<double>(instructions_retired) / static_cast<double>(cycles) : 0.0; }
     double dispq_avg()  const { return cycles ? dispq_avg_sum  / static_cast<double>(cycles) : 0.0; }
     double schedq_avg() const { return cycles ? schedq_avg_sum / static_cast<double>(cycles) : 0.0; }
     double rob_avg()    const { return cycles ? rob_avg_sum    / static_cast<double>(cycles) : 0.0; }
+    double useful_pct() const { return cycles ? 100.0 * static_cast<double>(useful_retire_cycles) / static_cast<double>(cycles) : 0.0; }
 };
 
 class OooCore {
@@ -105,6 +132,13 @@ public:
         trace_logger_ = logger;
         core_id_      = core_id;
     }
+
+    // Software TID this core is currently running. Stamped onto
+    // every MemReq the LSU issues. Defaults to 0; full_mode sets it
+    // = core_id at construction (1:1 fixed mapping). When
+    // ThreadScheduler lands, it will call this on context switch.
+    void set_active_tid(std::uint32_t tid) { active_tid_ = tid; }
+    std::uint32_t active_tid() const { return active_tid_; }
 
     // Test introspection.
     std::size_t dispq_size() const { return dispq_.size(); }
@@ -162,8 +196,9 @@ private:
 
     // LOG=1 hooks. Both default to "off"; full_mode wires them up
     // post-construction via set_trace_logger().
-    TraceLogger* trace_logger_ = nullptr;
-    int          core_id_      = 0;
+    TraceLogger*  trace_logger_ = nullptr;
+    int           core_id_      = 0;
+    std::uint32_t active_tid_   = 0;
 };
 
 } // namespace comparch::ooo

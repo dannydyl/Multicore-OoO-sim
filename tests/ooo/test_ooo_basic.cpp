@@ -112,6 +112,61 @@ std::unique_ptr<std::stringstream> records_to_stream(const std::vector<Record>& 
 
 } // namespace
 
+TEST_CASE("Utilization counters partition cycles correctly", "[ooo][util]") {
+    // A tiny ALU stream: ensure useful_retire + retire_stall_rob_empty
+    // + retire_stall_head_busy == cycles, and fetch-axis sums to cycles.
+    std::vector<Record> recs;
+    for (int i = 0; i < 200; ++i) {
+        Record r{};
+        r.ip = 0x1000 + 4ULL * i;
+        r.destination_registers[0] = static_cast<std::uint8_t>(1 + (i % 31));
+        recs.push_back(r);
+    }
+    auto stream = records_to_stream(recs);
+    Reader reader(*stream, Variant::Standard);
+    Cache l1d(small_l1d(), "L1d");
+    auto pred = comparch::predictor::make(always_taken_cfg());
+    OooCore core(narrow_4_4(), *pred, l1d, reader);
+    core.run(/*cycle_cap=*/10000);
+
+    const auto& s = core.stats();
+    REQUIRE(core.eof());
+
+    const auto retire_axis = s.useful_retire_cycles +
+                             s.retire_stall_rob_empty +
+                             s.retire_stall_head_busy;
+    REQUIRE(retire_axis == s.cycles);
+
+    const auto fetch_stalls = s.fetch_stall_sync +
+                              s.fetch_stall_dispq_full +
+                              s.fetch_stall_mispred +
+                              s.fetch_stall_eof;
+    // Fetch axis: fetch fired some cycles, stalled others. Together
+    // they sum to total cycles (or close — fetched cycles aren't
+    // tracked as a counter, only derived). Just check stalls don't
+    // exceed total.
+    REQUIRE(fetch_stalls <= s.cycles);
+
+    // ALU stream: ALU busy at least sometimes, MUL never, LSU never.
+    REQUIRE(s.alu_busy_sum > 0);
+    REQUIRE(s.mul_busy_sum == 0);
+    REQUIRE(s.lsu_busy_sum == 0);
+}
+
+TEST_CASE("set_active_tid round-trips and defaults to 0", "[ooo][tid]") {
+    auto stream = records_to_stream({});
+    Reader reader(*stream, Variant::Standard);
+    Cache l1d(small_l1d(), "L1d");
+    auto pred = comparch::predictor::make(always_taken_cfg());
+    OooCore core(narrow_4_4(), *pred, l1d, reader);
+
+    REQUIRE(core.active_tid() == 0u);
+    core.set_active_tid(42);
+    REQUIRE(core.active_tid() == 42u);
+    core.set_active_tid(0xFFFFFFFFu);
+    REQUIRE(core.active_tid() == 0xFFFFFFFFu);
+}
+
 TEST_CASE("Empty trace: zero retired, finite cycles", "[ooo][empty]") {
     auto stream = records_to_stream({});
     Reader reader(*stream, Variant::Standard);

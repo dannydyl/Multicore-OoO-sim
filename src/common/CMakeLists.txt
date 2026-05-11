@@ -2,6 +2,8 @@ add_library(casim_common STATIC
     cli.cpp
     config.cpp
     log.cpp
+    program_manifest.cpp
+    sync_coordinator.cpp
     trace.cpp
 )
 

@@ -65,6 +65,16 @@ struct Inst {
     // memory disambiguation (loads can only fire when no older store is
     // in flight, etc.).
     std::uint64_t dyn_count     = 0;
+
+    // Sync pseudo-instruction marker. When true, this Inst is a
+    // placeholder for a signal-side sync event (LockRelease,
+    // BarrierArrive, atomic) that surfaced through the CasimV2
+    // reader. It flows through the pipeline as a zero-dep ALU and
+    // the retire stage calls SyncSink::notify_retire with the
+    // payload here. opcode stays Alu so dispatch/exec treat it as
+    // a trivial ALU; the sync semantics are delivered at retire.
+    bool             has_sync_token = false;
+    trace::SyncToken sync_token{};
 };
 
 // Build an Inst from a ChampSim Record. `dyn_count` is the program-order

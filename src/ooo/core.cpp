@@ -63,6 +63,19 @@ bool OooCore::tick() {
     stats_.dispq_avg_sum  += static_cast<double>(dispq_.size());
     stats_.schedq_avg_sum += static_cast<double>(sq_.size());
     stats_.rob_avg_sum    += static_cast<double>(rob_.size());
+
+    // Per-FU utilization. Count busy slots after schedule has had
+    // a chance to (re)issue this cycle. We count an FU as busy if
+    // any of its pipeline stages holds an instruction. For ALUs
+    // and LSUs that's just `busy`; for MULs it's any of the three
+    // stages. alu_busy_sum / (cycles * alu_fus) = per-ALU util.
+    for (const auto& u : alu_) if (u.busy) ++stats_.alu_busy_sum;
+    for (const auto& u : mul_) {
+        if (u.busy_stage[0] || u.busy_stage[1] || u.busy_stage[2])
+            ++stats_.mul_busy_sum;
+    }
+    for (const auto& u : lsu_) if (u.busy) ++stats_.lsu_busy_sum;
+
     ++stats_.cycles;
 
     // Tick the cache at end-of-cycle so MSHR readiness is observable on
@@ -125,6 +138,13 @@ std::uint64_t OooCore::stage_state_update(bool& mispred_retired_out) {
     mispred_retired_out = false;
     std::uint64_t retired = 0;
 
+    // Snapshot retire-stall reason before the loop. If the loop
+    // retires anything we'll discard the reason and credit a
+    // useful-retire cycle instead.
+    const bool rob_empty_at_start = rob_.empty();
+    const bool head_not_ready_at_start =
+        !rob_empty_at_start && !rob_.head_entry().ready;
+
     while (!rob_.empty() && rob_.head_entry().ready) {
         const auto& head = rob_.head_entry();
 
@@ -170,9 +190,34 @@ std::uint64_t OooCore::stage_state_update(bool& mispred_retired_out) {
                 head.inst.branch_taken, head.inst.predicted_taken,
                 /*mispredict=*/false);
         }
+        // Sync pseudo-Inst retire: deliver the signal-side event to
+        // the SyncCoordinator. Other threads stalled on a matching
+        // gate (e.g. LockAcquire waiting for this LockRelease) will
+        // see the state advance on their next poll. This is the
+        // retire-time consumption that gives lock contention real
+        // cycle cost — without it, lock release "lands" at fetch
+        // and serialization is purely nominal.
+        if (head.inst.has_sync_token && trace_->sync_sink()) {
+            trace::SyncRecord sr;
+            sr.kind             = static_cast<trace::SyncKind>(head.inst.sync_token.kind);
+            sr.sync_object_addr = head.inst.sync_token.sync_object_addr;
+            sr.sequence_no      = head.inst.sync_token.sequence_no;
+            sr.extra_arg        = head.inst.sync_token.extra_arg;
+            sr.ip               = head.inst.pc;
+            trace_->sync_sink()->notify_retire(active_tid_, sr);
+        }
         rob_.retire_head();
         ++retired;
         ++stats_.instructions_retired;
+    }
+
+    // Utilization attribution.
+    if (retired > 0) {
+        ++stats_.useful_retire_cycles;
+    } else if (rob_empty_at_start) {
+        ++stats_.retire_stall_rob_empty;
+    } else if (head_not_ready_at_start) {
+        ++stats_.retire_stall_head_busy;
     }
 
     return retired;
@@ -377,6 +422,7 @@ void OooCore::stage_schedule() {
             req.originating_op = req.op;     // CPU-level op; carried through
                                              // L1 -> L2 -> coherence_sink so a
                                              // store fill marks L1 dirty.
+            req.tid            = active_tid_;
             auto id = l1d_->issue(req);
             if (!id) {
                 // Full() check above should make this unreachable, but
@@ -467,22 +513,43 @@ void OooCore::stage_dispatch() {
 // stage_fetch — read trace records, predict, push to dispq.
 // ---------------------------------------------------------------------------
 void OooCore::stage_fetch() {
-    if (in_mispred_ || eof_) {
-        // project2's DRIVER_READ_MISPRED path: do nothing this cycle
-        // (the mispredicted branch itself was already pushed last
-        // time). Wait for retire to flush.
+    if (in_mispred_) {
+        ++stats_.fetch_stall_mispred;
         return;
     }
+    if (eof_) {
+        ++stats_.fetch_stall_eof;
+        return;
+    }
+
+    // Track the first stall reason this cycle so utilization
+    // breakdown attributes "no-fetch" cycles to a single cause.
+    // We only credit a stall reason when zero records made it
+    // into dispq this cycle.
+    std::size_t fetched_this_cycle = 0;
+    enum class FetchStall { None, DispqFull, Sync, Eof } first_stall = FetchStall::None;
 
     for (std::size_t i = 0; i < cfg_.fetch_width; ++i) {
         // Bounded dispatch queue: stall fetch when there is no room.
         // Check before reading from the trace so we don't drop records.
-        if (dispq_.size() >= cfg_.dispq_capacity) return;
+        if (dispq_.size() >= cfg_.dispq_capacity) {
+            if (fetched_this_cycle == 0) first_stall = FetchStall::DispqFull;
+            break;
+        }
 
         trace::Record rec{};
         if (!trace_->next(rec)) {
+            // CasimV2 + SyncCoordinator: a false return with
+            // blocked()==true means the head sync record was
+            // rejected by the sink, not EOF. Stall fetch this
+            // cycle without ending the trace.
+            if (trace_->blocked()) {
+                if (fetched_this_cycle == 0) first_stall = FetchStall::Sync;
+                break;
+            }
             eof_ = true;
-            return;
+            if (fetched_this_cycle == 0) first_stall = FetchStall::Eof;
+            break;
         }
 
         ++dyn_count_;
@@ -500,12 +567,29 @@ void OooCore::stage_fetch() {
 
         dispq_.push_back(inst);
         ++stats_.instructions_fetched;
+        ++fetched_this_cycle;
 
         if (inst.mispredict) {
             // Push the mispredicted branch itself, then stop fetching
             // until retire flushes the pipeline.
             in_mispred_ = true;
-            return;
+            break;
+        }
+    }
+
+    // Credit utilization counters at single exit point. Only
+    // attribute a stall reason when nothing was fetched this cycle.
+    if (fetched_this_cycle == 0) {
+        switch (first_stall) {
+            case FetchStall::DispqFull: ++stats_.fetch_stall_dispq_full; break;
+            case FetchStall::Sync:      ++stats_.fetch_stall_sync;       break;
+            case FetchStall::Eof:       ++stats_.fetch_stall_eof;        break;
+            case FetchStall::None:      ++stats_.fetch_stall_dispq_full; break;
+                // None should be unreachable when loop did 0 work, but
+                // attributing to DispqFull is the harmless default —
+                // it just means we ran fetch_width iterations and
+                // returned without pushing anything, which today
+                // can't happen (we'd hit one of the named branches).
         }
     }
 }

@@ -22,6 +22,21 @@ struct MemReq {
     // that never set it (prefetches, write-back traffic) behave as
     // before.
     Op            originating_op = Op::Read;
+
+    // Software thread that issued this request. Source of truth is
+    // OooCore::active_tid_; the core stamps this field at issue time
+    // and the cache cascade (writebacks, fills, prefetches) propagates
+    // it unchanged. Defaults to 0 so single-thread paths and existing
+    // brace-init call sites that omit it read as "thread 0", matching
+    // pre-multithread behavior.
+    //
+    // Currently dropped at the coherence_sink boundary (the directory
+    // still tracks sharers by NodeId == core ID, since with 1:1
+    // thread-to-core mapping TID == core ID). When ThreadScheduler
+    // lands and a thread can move between cores, this field becomes
+    // load-bearing for per-thread coherence stats and for routing
+    // SyncCoordinator notifications back to the right thread.
+    std::uint32_t tid            = 0;
 };
 
 // Synchronous result of a Cache::access() call: was it a hit, and what is

@@ -1,2 +1,3 @@
 add_subdirectory(gen_trace)
 add_subdirectory(proj2_to_champsim)
+add_subdirectory(casim_synth)

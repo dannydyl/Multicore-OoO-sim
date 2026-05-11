@@ -19,6 +19,12 @@ struct CliArgs {
     // Lets full mode mix workloads across cores. Mutually exclusive with
     // --trace and --trace-dir.
     std::optional<std::filesystem::path> trace_list;
+    // Multi-thread program manifest (CasimV2 traces). Selects sync-aware
+    // replay: one .casim per thread, all wired through a shared
+    // SyncCoordinator. The manifest declares thread_count which must
+    // equal cores (no scheduler multiplexing in v1). Mutually exclusive
+    // with --trace / --trace-dir / --trace-list.
+    std::optional<std::filesystem::path> program;
     Mode mode = Mode::Full;
     std::optional<std::filesystem::path> out;
     std::optional<int> override_cores;

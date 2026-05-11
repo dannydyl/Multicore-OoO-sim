@@ -33,6 +33,34 @@ target_link_libraries(test_trace
 
 catch_discover_tests(test_trace)
 
+add_executable(test_sync_coordinator
+    common/test_sync_coordinator.cpp
+)
+
+target_link_libraries(test_sync_coordinator
+    PRIVATE
+        casim_common
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_sync_coordinator)
+
+add_executable(test_program_manifest
+    common/test_program_manifest.cpp
+)
+
+target_link_libraries(test_program_manifest
+    PRIVATE
+        casim_common
+        Catch2::Catch2WithMain
+        casim_warnings
+        casim_options
+)
+
+catch_discover_tests(test_program_manifest)
+
 add_executable(test_gen_trace
     tools/test_gen_trace.cpp
 )
@@ -97,6 +125,7 @@ catch_discover_tests(test_predictor)
 
 add_executable(test_ooo
     ooo/test_ooo_basic.cpp
+    ooo/test_multi_thread.cpp
 )
 
 target_link_libraries(test_ooo
@@ -156,6 +185,7 @@ add_executable(test_full
 target_link_libraries(test_full
     PRIVATE
         casim_full
+        casim_synth
         Catch2::Catch2WithMain
         casim_warnings
         casim_options

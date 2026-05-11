@@ -327,7 +327,8 @@ AccessResult Cache::access(const MemReq& req) {
             if (cfg_.next_level) {
                 const auto sub = cfg_.next_level->access(
                     MemReq{block_addr << cfg_.b, Op::Read, req.pc,
-                           /*originating_op=*/req.op});
+                           /*originating_op=*/req.op,
+                           /*tid=*/req.tid});
                 if (sub.latency == kCoherenceSuspendedLatency) {
                     suspended = true;
                 } else {
@@ -335,7 +336,9 @@ AccessResult Cache::access(const MemReq& req) {
                 }
             } else if (cfg_.main_memory) {
                 downstream_latency = cfg_.main_memory->access(
-                    MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
+                    MemReq{block_addr << cfg_.b, Op::Read, req.pc,
+                           /*originating_op=*/Op::Read,
+                           /*tid=*/req.tid}).latency;
             } else if (cfg_.coherence_sink) {
                 // Coherence-managed fetch: the sink will message the
                 // directory and call mark_ready when DATA arrives. Skip
@@ -411,12 +414,16 @@ AccessResult Cache::access(const MemReq& req) {
         // the read to memory, then run the prefetcher (matches project1).
         if (cfg_.next_level) {
             const auto sub = cfg_.next_level->access(
-                MemReq{block_addr << cfg_.b, Op::Read, req.pc});
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc,
+                       /*originating_op=*/Op::Read,
+                       /*tid=*/req.tid});
             if (sub.latency == kCoherenceSuspendedLatency) suspended = true;
             else downstream_latency = sub.latency;
         } else if (cfg_.main_memory) {
             downstream_latency = cfg_.main_memory->access(
-                MemReq{block_addr << cfg_.b, Op::Read, req.pc}).latency;
+                MemReq{block_addr << cfg_.b, Op::Read, req.pc,
+                       /*originating_op=*/Op::Read,
+                       /*tid=*/req.tid}).latency;
         } else if (cfg_.coherence_sink) {
             // Pass originating_op (the top-level op) so a store-miss
             // round-trip that surfaces here in L2 still tells the

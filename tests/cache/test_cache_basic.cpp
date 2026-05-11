@@ -25,6 +25,28 @@ Cache::Config small_l1() {
 
 } // namespace
 
+TEST_CASE("MemReq.tid defaults to 0 and accepts brace-init at the tail",
+          "[cache][memreq]") {
+    // Defaults: every field at its zero/Read state.
+    MemReq def{};
+    REQUIRE(def.tid == 0u);
+
+    // Positional brace-init with all fields. Order: addr, op, pc,
+    // originating_op, tid. If a future change re-orders fields, the
+    // values will land in the wrong slots and these checks will fail.
+    MemReq full{0xCAFEULL, Op::Write, 0xBEEFULL, Op::Write, 7u};
+    REQUIRE(full.addr           == 0xCAFEULL);
+    REQUIRE(full.op             == Op::Write);
+    REQUIRE(full.pc             == 0xBEEFULL);
+    REQUIRE(full.originating_op == Op::Write);
+    REQUIRE(full.tid            == 7u);
+
+    // Positional brace-init that omits tid (the existing convention
+    // in tests/cache/test_prefetcher_*.cpp) keeps tid at default 0.
+    MemReq pre{0x1000ULL, Op::Read};
+    REQUIRE(pre.tid == 0u);
+}
+
 TEST_CASE("L1 cold miss then hit on the same block", "[cache]") {
     Cache l1(small_l1(), "L1");
 

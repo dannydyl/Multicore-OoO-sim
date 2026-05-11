@@ -206,3 +206,222 @@ TEST_CASE("full mode: --trace-list with wrong entry count throws",
     REQUIRE_THROWS_AS(run_manifest(manifest, 4, "mesi"),
                       comparch::trace::TraceError);
 }
+
+// ---- --program (multi-thread CasimV2) ---------------------------------
+
+namespace {
+
+// Write a CasimV2 trace with `n` ALU records then a Lock acquire/release
+// pair around them. Used to construct a tiny program where thread 1
+// must wait for thread 0's release before its acquire goes through.
+fs::path write_v2_lock_trace(const fs::path& path, std::uint32_t tid,
+                             std::uint32_t total, int n_pre, int n_crit,
+                             int n_post, std::uint64_t lock_obj,
+                             std::uint64_t acq_seq, std::uint64_t rel_seq) {
+    using namespace comparch::trace;
+    Writer w(path, Variant::CasimV2);
+    FileHeader h;
+    h.thread_id = tid;
+    h.thread_count = total;
+    h.program_uid = 0xABCDEF;
+    w.write_header(h);
+    auto alu = [&](std::uint64_t pc) {
+        Record r{};
+        r.ip = pc;
+        r.destination_registers[0] = static_cast<std::uint8_t>(1 + (pc % 31));
+        w.write(r);
+    };
+    for (int i = 0; i < n_pre;  ++i) alu(0x1000 + static_cast<std::uint64_t>(tid) * 0x10000 + 4u*i);
+    w.write(SyncRecord{SyncKind::LockAcquire, lock_obj, acq_seq, 0, 0, 0});
+    for (int i = 0; i < n_crit; ++i) alu(0x2000 + static_cast<std::uint64_t>(tid) * 0x10000 + 4u*i);
+    w.write(SyncRecord{SyncKind::LockRelease, lock_obj, rel_seq, 0, 0, 0});
+    for (int i = 0; i < n_post; ++i) alu(0x3000 + static_cast<std::uint64_t>(tid) * 0x10000 + 4u*i);
+    return path;
+}
+
+fs::path write_program_manifest(const fs::path& dir,
+                                const std::string& name,
+                                const std::vector<fs::path>& tpaths) {
+    auto m = dir / (name + ".manifest");
+    std::ofstream f(m);
+    f << "program: " << name << "\n";
+    f << "threads: " << tpaths.size() << "\n";
+    for (std::size_t i = 0; i < tpaths.size(); ++i) {
+        f << "t" << i << ": " << tpaths[i].string() << "\n";
+    }
+    return m;
+}
+
+int run_program(const fs::path& manifest, int cores, const std::string& proto) {
+    comparch::SimConfig cfg;
+    cfg.cores              = cores;
+    cfg.coherence.protocol = proto;
+    comparch::CliArgs cli;
+    cli.program = manifest;
+    cli.mode    = comparch::Mode::Full;
+    return comparch::full::run_full_mode(cfg, cli);
+}
+
+} // namespace
+
+TEST_CASE("full mode: --program 2-thread sync trace runs end-to-end",
+          "[full][program][sync]") {
+    auto dir = fs::temp_directory_path() / "full_prog_lock2";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    constexpr std::uint64_t kLock = 0xCAFE0;
+    auto t0 = write_v2_lock_trace(dir / "t0.casim", 0, 2,
+                                  /*pre=*/20, /*crit=*/30, /*post=*/10,
+                                  kLock, /*acq=*/0, /*rel=*/0);
+    auto t1 = write_v2_lock_trace(dir / "t1.casim", 1, 2,
+                                  /*pre=*/5,  /*crit=*/10, /*post=*/5,
+                                  kLock, /*acq=*/1, /*rel=*/1);
+    auto manifest = write_program_manifest(dir, "lock2", {t0, t1});
+
+    CoutCapture cap;
+    REQUIRE(run_program(manifest, 2, "mesi") == 0);
+    const auto out = cap.str();
+    REQUIRE(out.find("Simulation complete") != std::string::npos);
+    REQUIRE(out.find("[ Core 0 ]") != std::string::npos);
+    REQUIRE(out.find("[ Core 1 ]") != std::string::npos);
+
+    // Both threads must have retired all their instructions. Thread 0:
+    // 20 pre + 30 crit + 10 post = 60. Thread 1: 5 + 10 + 5 = 20.
+    // Each thread: pre + crit + post real ALU + 1 LockRelease
+    // pseudo-Inst (LockAcquire is a pure gate, no pseudo).
+    // t0: 20 + 30 + 1 + 10 = 61. t1: 5 + 10 + 1 + 5 = 21.
+    REQUIRE(out.find("instructions retired      : 61") != std::string::npos);
+    REQUIRE(out.find("instructions retired      : 21") != std::string::npos);
+}
+
+TEST_CASE("full mode: --program with cores != threads errors out",
+          "[full][program]") {
+    auto dir = fs::temp_directory_path() / "full_prog_mismatch";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    auto t0 = write_v2_lock_trace(dir / "t0.casim", 0, 2, 2, 2, 2, 0x1, 0, 0);
+    auto t1 = write_v2_lock_trace(dir / "t1.casim", 1, 2, 2, 2, 2, 0x1, 1, 1);
+    auto manifest = write_program_manifest(dir, "mismatch", {t0, t1});
+
+    // Manifest declares 2 threads; pass cores=4 → must error (return 1).
+    CoutCapture cap;
+    REQUIRE(run_program(manifest, 4, "mesi") == 1);
+}
+
+// ---- casim_synth library integration ---------------------------------
+
+#include "casim_synth.hpp"
+
+TEST_CASE("casim_synth: lock_chain program writes a trace that the sim runs",
+          "[full][program][synth]") {
+    using namespace comparch::casim_synth;
+
+    auto dir = fs::temp_directory_path() / "synth_lock_chain_test";
+    fs::remove_all(dir);
+
+    Program prog("lc4_test", /*threads=*/4);
+    auto m = prog.mutex();
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        prog.t(i).alus(30).lock(m).alus(40).unlock(m).alus(10);
+    }
+    prog.write(dir);
+
+    REQUIRE(fs::exists(dir / "lc4_test.manifest"));
+    for (int i = 0; i < 4; ++i) {
+        REQUIRE(fs::exists(dir / ("t" + std::to_string(i) + ".casim")));
+    }
+
+    CoutCapture cap;
+    REQUIRE(run_program(dir / "lc4_test.manifest", 4, "mesi") == 0);
+    const auto out = cap.str();
+    REQUIRE(out.find("Simulation complete") != std::string::npos);
+    // Each thread retires: 30 ALU + load + store (acquire pattern)
+    // + 40 ALU + store (release pattern) + LockRelease pseudo-Inst
+    // + 10 ALU = 84. The LockAcquire is a pure gate (dropped at
+    // fetch on approval, never retires).
+    REQUIRE(out.find("instructions retired      : 84") != std::string::npos);
+}
+
+TEST_CASE("Run produces utilization.rpt alongside the other report files",
+          "[full][program][report]") {
+    using namespace comparch::casim_synth;
+
+    auto dir = fs::temp_directory_path() / "synth_util_rpt_test";
+    fs::remove_all(dir);
+
+    Program prog("util_rpt_unique", /*threads=*/2);
+    auto m = prog.mutex();
+    prog.t(0).alus(10).lock(m).alus(10).unlock(m).alus(5);
+    prog.t(1).alus(5).lock(m).alus(10).unlock(m).alus(5);
+    prog.write(dir);
+
+    CoutCapture cap;
+    REQUIRE(run_program(dir / "util_rpt_unique.manifest", 2, "mesi") == 0);
+
+    // Run output dir is `report/<trace>_<proto>_c<N>[_tag]/` relative
+    // to the test's cwd. ctest can invoke us from either build/ or
+    // build/tests/, so check both roots. The manifest name is the
+    // unique stem.
+    const auto roots = {fs::path("report"),
+                        fs::path("tests/report"),
+                        fs::path("../report")};
+    bool found = false;
+    for (const auto& root : roots) {
+        if (!fs::exists(root)) continue;
+        for (auto& entry : fs::recursive_directory_iterator(root)) {
+            if (!entry.is_regular_file() ||
+                entry.path().filename() != "utilization.rpt") continue;
+            if (entry.path().parent_path().filename().string()
+                    .find("util_rpt_unique") == std::string::npos)
+                continue;
+            std::ifstream f(entry.path());
+            std::stringstream ss; ss << f.rdbuf();
+            const auto txt = ss.str();
+            REQUIRE(txt.find("Pipeline Utilization") != std::string::npos);
+            REQUIRE(txt.find("useful retire")        != std::string::npos);
+            REQUIRE(txt.find("SyncCoordinator")      != std::string::npos);
+            REQUIRE(txt.find("[ Core 0 ]")           != std::string::npos);
+            REQUIRE(txt.find("[ Core 1 ]")           != std::string::npos);
+            found = true;
+            break;
+        }
+        if (found) break;
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("casim_synth: dot_product program runs end-to-end under MESI",
+          "[full][program][synth]") {
+    using namespace comparch::casim_synth;
+
+    auto dir = fs::temp_directory_path() / "synth_dotprod_test";
+    fs::remove_all(dir);
+
+    Program prog("dp4", /*threads=*/4);
+    auto sum_lock = prog.mutex();
+    auto bA       = prog.barrier(4);
+    auto bB       = prog.barrier(4);
+
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        auto th = prog.t(i);
+        // small local loop so the test runs in well under a second
+        for (int k = 0; k < 16; ++k) {
+            th.load(0x40000000ULL + i * 0x100000ULL + k * 64ULL);
+            th.alus(2);
+        }
+        th.barrier(bA);
+        th.lock(sum_lock);
+        th.load(0x80000000ULL).alus(2).store(0x80000000ULL);
+        th.unlock(sum_lock);
+        th.barrier(bB);
+        th.alus(5);
+    }
+    prog.write(dir);
+
+    CoutCapture cap;
+    REQUIRE(run_program(dir / "dp4.manifest", 4, "mesi") == 0);
+    const auto out = cap.str();
+    REQUIRE(out.find("Simulation complete") != std::string::npos);
+    REQUIRE(out.find("[ Core 3 ]") != std::string::npos);
+}

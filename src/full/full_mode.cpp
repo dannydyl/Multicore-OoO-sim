@@ -40,6 +40,8 @@
 #include "comparch/ooo/core.hpp"
 #include "comparch/ooo/trace_logger.hpp"
 #include "comparch/predictor/predictor.hpp"
+#include "comparch/program_manifest.hpp"
+#include "comparch/sync_coordinator.hpp"
 #include "comparch/trace.hpp"
 
 #include <cstdlib>   // getenv
@@ -108,11 +110,13 @@ coherence::Settings to_settings(const SimConfig& cfg) {
     s.link_width_log2 = static_cast<std::size_t>(cfg.interconnect.link_width_log2);
     s.cache_mode      = coherence::parse_cache_mode(cfg.coherence.cache_mode);
     s.inclusion       = coherence::parse_inclusion(cfg.coherence.inclusion);
-    if (s.cache_mode == coherence::CacheMode::SharedLls &&
-        s.inclusion  == coherence::Inclusion::NonInclusive) {
-        throw ConfigError("inclusion='non_inclusive' is reserved for a follow-up; "
-                          "v0 only supports inclusive LLS");
-    }
+    // The shared-LLS data path implements non-inclusive non-exclusive
+    // (NINE): every L1 fill installs the line in LLS, but LLS evictions
+    // do NOT back-invalidate L1 holders (see directory.cpp
+    // schedule_data_response, "v0 simplification"). Strict inclusive
+    // would require a back-invalidate message and per-agent handling
+    // for non-S states; until then both labels accept the same path,
+    // and 'non_inclusive' is the honest one.
     // LLS geometry. Always populated so logs/reports can render it even
     // in private_l2 mode (the directory just won't consult an LlsCache).
     const std::size_t bs = static_cast<std::size_t>(cfg.lls.block_size);
@@ -192,6 +196,7 @@ std::vector<fs::path> resolve_per_core_traces(const CliArgs& cli, int cores) {
 std::string trace_label(const CliArgs& cli) {
     if (cli.trace_dir)  return cli.trace_dir->string();
     if (cli.trace_list) return cli.trace_list->string();
+    if (cli.program)    return cli.program->string();
     return {};
 }
 
@@ -601,6 +606,81 @@ void write_detailed_per_core(std::ostream& os, const ReportContext& ctx) {
         kv(os, "    ", "ROB-full dispatch stalls",
            str(s.rob_no_dispatch_cycles) + " (" + fix(m.rob_full_pct, 2) + " %)");
 
+        // ---- Cycle utilization breakdown -------------------------
+        // Two independent partitions of every cycle. Each axis
+        // sums to 100% (modulo rounding). The fetch axis tells
+        // you why the *frontend* was idle; the retire axis tells
+        // you why the *backend* couldn't commit. The headline
+        // number is `useful retire cycles` — cycles where at
+        // least one instruction committed.
+        const auto cyc = s.cycles ? s.cycles : 1;
+        auto pct = [&](std::uint64_t v) {
+            return fix(100.0 * static_cast<double>(v) /
+                       static_cast<double>(cyc), 2) + " %";
+        };
+        // "Fetch fired" = cycles where fetch added at least one
+        // record to dispq. Derived: cyc - (sum of fetch_stall_*).
+        const auto fetch_stalls_sum = s.fetch_stall_sync +
+                                      s.fetch_stall_dispq_full +
+                                      s.fetch_stall_mispred +
+                                      s.fetch_stall_eof;
+        const auto fetch_fired = (cyc >= fetch_stalls_sum)
+                                 ? cyc - fetch_stalls_sum : 0;
+
+        os << "  Cycle utilization (headline)\n";
+        kv(os, "    ", "useful retire cycles",
+           str(s.useful_retire_cycles) + " (" +
+           pct(s.useful_retire_cycles) + ")  <-- pipeline doing useful work");
+        kv(os, "    ", "fetch fired cycles",
+           str(fetch_fired) + " (" +
+           fix(100.0 * static_cast<double>(fetch_fired) /
+               static_cast<double>(cyc), 2) + " %)");
+
+        os << "  Backend stall breakdown (sums to 100%)\n";
+        kv(os, "    ", "retire fired",
+           str(s.useful_retire_cycles) + " (" +
+           pct(s.useful_retire_cycles) + ")");
+        kv(os, "    ", "retire stall: ROB empty",
+           str(s.retire_stall_rob_empty) + " (" +
+           pct(s.retire_stall_rob_empty) + ")");
+        kv(os, "    ", "retire stall: head not ready",
+           str(s.retire_stall_head_busy) + " (" +
+           pct(s.retire_stall_head_busy) + ")");
+
+        os << "  Frontend stall breakdown (sums to 100%)\n";
+        kv(os, "    ", "fetch fired",
+           str(fetch_fired) + " (" +
+           fix(100.0 * static_cast<double>(fetch_fired) /
+               static_cast<double>(cyc), 2) + " %)");
+        kv(os, "    ", "fetch stall: sync (SyncCoordinator)",
+           str(s.fetch_stall_sync) + " (" + pct(s.fetch_stall_sync) + ")");
+        kv(os, "    ", "fetch stall: dispq full",
+           str(s.fetch_stall_dispq_full) + " (" +
+           pct(s.fetch_stall_dispq_full) + ")");
+        kv(os, "    ", "fetch stall: mispred recovery",
+           str(s.fetch_stall_mispred) + " (" +
+           pct(s.fetch_stall_mispred) + ")");
+        kv(os, "    ", "fetch stall: post-EOF idle",
+           str(s.fetch_stall_eof) + " (" + pct(s.fetch_stall_eof) + ")");
+
+        // Per-FU utilization. Each cycle counts at most #FUs of a
+        // class as busy; util% is busy-slot-cycles / (cycles * count).
+        auto fu_util = [&](std::uint64_t busy_sum, int count) {
+            const auto denom = static_cast<double>(cyc) *
+                               static_cast<double>(count > 0 ? count : 1);
+            return fix(100.0 * static_cast<double>(busy_sum) / denom, 2);
+        };
+        os << "  Functional unit utilization\n";
+        kv(os, "    ", "ALU (count / busy-cycles / per-FU util)",
+           str(ctx.cfg.core.alu_fus) + " / " + str(s.alu_busy_sum) +
+           " / " + fu_util(s.alu_busy_sum, ctx.cfg.core.alu_fus) + " %");
+        kv(os, "    ", "MUL (count / busy-cycles / per-FU util)",
+           str(ctx.cfg.core.mul_fus) + " / " + str(s.mul_busy_sum) +
+           " / " + fu_util(s.mul_busy_sum, ctx.cfg.core.mul_fus) + " %");
+        kv(os, "    ", "LSU (count / busy-cycles / per-FU util)",
+           str(ctx.cfg.core.lsu_fus) + " / " + str(s.lsu_busy_sum) +
+           " / " + fu_util(s.lsu_busy_sum, ctx.cfg.core.lsu_fus) + " %");
+
         if (i + 1 < ctx.stacks.size()) os << '\n';
     }
     os << '\n';
@@ -721,6 +801,176 @@ void write_coherence_file(std::ostream& os, const ReportContext& ctx) {
     write_coherence(os, ctx);
 }
 
+// Body section for utilization.rpt: aggregate over cores plus
+// per-core breakdown. Same numbers as the "Cycle utilization"
+// block in stats.rpt, but isolated so it's diff-friendly across
+// sweep runs and easy to consume for "where did the cycles go"
+// pipeline-effectiveness analysis.
+void write_utilization(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '-', "System aggregate (across all cores)");
+
+    // Cross-core totals. Each core's `cycles` should equal `ctx.clock`
+    // (since tick is driven by the global loop), so dividing by
+    // ctx.stacks.size() * ctx.clock gives the average per-core %.
+    std::uint64_t agg_cycles            = 0;
+    std::uint64_t agg_useful_retire     = 0;
+    std::uint64_t agg_fetch_sync        = 0;
+    std::uint64_t agg_fetch_dispq_full  = 0;
+    std::uint64_t agg_fetch_mispred     = 0;
+    std::uint64_t agg_fetch_eof         = 0;
+    std::uint64_t agg_retire_rob_empty  = 0;
+    std::uint64_t agg_retire_head_busy  = 0;
+    std::uint64_t agg_alu_busy_sum      = 0;
+    std::uint64_t agg_mul_busy_sum      = 0;
+    std::uint64_t agg_lsu_busy_sum      = 0;
+    for (auto& cs : ctx.stacks) {
+        const auto& s = cs->core->stats();
+        agg_cycles           += s.cycles;
+        agg_useful_retire    += s.useful_retire_cycles;
+        agg_fetch_sync       += s.fetch_stall_sync;
+        agg_fetch_dispq_full += s.fetch_stall_dispq_full;
+        agg_fetch_mispred    += s.fetch_stall_mispred;
+        agg_fetch_eof        += s.fetch_stall_eof;
+        agg_retire_rob_empty += s.retire_stall_rob_empty;
+        agg_retire_head_busy += s.retire_stall_head_busy;
+        agg_alu_busy_sum     += s.alu_busy_sum;
+        agg_mul_busy_sum     += s.mul_busy_sum;
+        agg_lsu_busy_sum     += s.lsu_busy_sum;
+    }
+    const auto den = agg_cycles ? agg_cycles : 1;
+    auto agg_pct = [&](std::uint64_t v) {
+        return fix(100.0 * static_cast<double>(v) /
+                   static_cast<double>(den), 2) + " %";
+    };
+    const auto fetch_fired_agg =
+        agg_cycles >= (agg_fetch_sync + agg_fetch_dispq_full +
+                       agg_fetch_mispred + agg_fetch_eof)
+            ? agg_cycles - (agg_fetch_sync + agg_fetch_dispq_full +
+                            agg_fetch_mispred + agg_fetch_eof)
+            : 0;
+
+    kv(os, "", "useful retire (any core)",
+       str(agg_useful_retire) + " (" + agg_pct(agg_useful_retire) + ")");
+    kv(os, "", "fetch fired (any core)",
+       str(fetch_fired_agg) + " (" + agg_pct(fetch_fired_agg) + ")");
+    os << "  Backend stall (sum across cores)\n";
+    kv(os, "    ", "retire fired",
+       str(agg_useful_retire) + " (" + agg_pct(agg_useful_retire) + ")");
+    kv(os, "    ", "ROB empty",
+       str(agg_retire_rob_empty) + " (" + agg_pct(agg_retire_rob_empty) + ")");
+    kv(os, "    ", "head not ready",
+       str(agg_retire_head_busy) + " (" + agg_pct(agg_retire_head_busy) + ")");
+    os << "  Frontend stall (sum across cores)\n";
+    kv(os, "    ", "fetch fired",
+       str(fetch_fired_agg) + " (" + agg_pct(fetch_fired_agg) + ")");
+    kv(os, "    ", "sync (SyncCoordinator)",
+       str(agg_fetch_sync) + " (" + agg_pct(agg_fetch_sync) + ")");
+    kv(os, "    ", "dispq full",
+       str(agg_fetch_dispq_full) + " (" + agg_pct(agg_fetch_dispq_full) + ")");
+    kv(os, "    ", "mispred recovery",
+       str(agg_fetch_mispred) + " (" + agg_pct(agg_fetch_mispred) + ")");
+    kv(os, "    ", "post-EOF idle",
+       str(agg_fetch_eof) + " (" + agg_pct(agg_fetch_eof) + ")");
+
+    auto fu_util_agg = [&](std::uint64_t busy_sum, int count) {
+        const auto denom = static_cast<double>(agg_cycles) *
+                           static_cast<double>(count > 0 ? count : 1);
+        return denom > 0
+            ? fix(100.0 * static_cast<double>(busy_sum) / denom, 2)
+            : std::string("0.00");
+    };
+    os << "  Functional unit utilization (across cores)\n";
+    kv(os, "    ", "ALU per-FU util",
+       fu_util_agg(agg_alu_busy_sum, ctx.cfg.core.alu_fus) + " %  (count=" +
+       str(ctx.cfg.core.alu_fus) + ", busy-cycles=" + str(agg_alu_busy_sum) + ")");
+    kv(os, "    ", "MUL per-FU util",
+       fu_util_agg(agg_mul_busy_sum, ctx.cfg.core.mul_fus) + " %  (count=" +
+       str(ctx.cfg.core.mul_fus) + ", busy-cycles=" + str(agg_mul_busy_sum) + ")");
+    kv(os, "    ", "LSU per-FU util",
+       fu_util_agg(agg_lsu_busy_sum, ctx.cfg.core.lsu_fus) + " %  (count=" +
+       str(ctx.cfg.core.lsu_fus) + ", busy-cycles=" + str(agg_lsu_busy_sum) + ")");
+    os << '\n';
+
+    // Per-core breakdown. Same content as the stats.rpt section
+    // but condensed (no surrounding pipeline/cache lines), so this
+    // file is short enough to diff against a baseline run.
+    write_separator(os, '-', "Per-core breakdown");
+    for (std::size_t i = 0; i < ctx.stacks.size(); ++i) {
+        const auto& s = ctx.stacks[i]->core->stats();
+        const auto cyc = s.cycles ? s.cycles : 1;
+        auto pct = [&](std::uint64_t v) {
+            return fix(100.0 * static_cast<double>(v) /
+                       static_cast<double>(cyc), 2) + " %";
+        };
+        const auto fetch_stalls_sum = s.fetch_stall_sync +
+                                      s.fetch_stall_dispq_full +
+                                      s.fetch_stall_mispred +
+                                      s.fetch_stall_eof;
+        const auto fetch_fired = (cyc >= fetch_stalls_sum)
+                                 ? cyc - fetch_stalls_sum : 0;
+
+        os << "[ Core " << i << " ]\n";
+        kv(os, "  ", "cycles",                str(s.cycles));
+        kv(os, "  ", "useful retire",
+           str(s.useful_retire_cycles) + " (" +
+           pct(s.useful_retire_cycles) + ")");
+        kv(os, "  ", "fetch fired",
+           str(fetch_fired) + " (" +
+           fix(100.0 * static_cast<double>(fetch_fired) /
+               static_cast<double>(cyc), 2) + " %)");
+        os << "  Backend (retire) stall — sums to 100%\n";
+        kv(os, "    ", "ROB empty",
+           str(s.retire_stall_rob_empty) + " (" +
+           pct(s.retire_stall_rob_empty) + ")");
+        kv(os, "    ", "head not ready",
+           str(s.retire_stall_head_busy) + " (" +
+           pct(s.retire_stall_head_busy) + ")");
+        os << "  Frontend (fetch) stall — sums to 100%\n";
+        kv(os, "    ", "sync (SyncCoordinator)",
+           str(s.fetch_stall_sync) + " (" + pct(s.fetch_stall_sync) + ")");
+        kv(os, "    ", "dispq full",
+           str(s.fetch_stall_dispq_full) + " (" +
+           pct(s.fetch_stall_dispq_full) + ")");
+        kv(os, "    ", "mispred recovery",
+           str(s.fetch_stall_mispred) + " (" +
+           pct(s.fetch_stall_mispred) + ")");
+        kv(os, "    ", "post-EOF idle",
+           str(s.fetch_stall_eof) + " (" + pct(s.fetch_stall_eof) + ")");
+
+        auto fu_util = [&](std::uint64_t busy_sum, int count) {
+            const auto denom = static_cast<double>(cyc) *
+                               static_cast<double>(count > 0 ? count : 1);
+            return fix(100.0 * static_cast<double>(busy_sum) / denom, 2);
+        };
+        os << "  Functional unit per-FU utilization\n";
+        kv(os, "    ", "ALU",
+           fu_util(s.alu_busy_sum, ctx.cfg.core.alu_fus) + " %  (busy-cycles=" +
+           str(s.alu_busy_sum) + ")");
+        kv(os, "    ", "MUL",
+           fu_util(s.mul_busy_sum, ctx.cfg.core.mul_fus) + " %  (busy-cycles=" +
+           str(s.mul_busy_sum) + ")");
+        kv(os, "    ", "LSU",
+           fu_util(s.lsu_busy_sum, ctx.cfg.core.lsu_fus) + " %  (busy-cycles=" +
+           str(s.lsu_busy_sum) + ")");
+        if (i + 1 < ctx.stacks.size()) os << '\n';
+    }
+}
+
+// utilization.rpt — focused pipeline-effectiveness breakdown.
+// Same per-core numbers as the corresponding stats.rpt section
+// but also includes a cross-core aggregate. Diff-friendly for
+// sweep tooling that wants to track "where do the cycles go"
+// across configuration changes.
+void write_utilization_file(std::ostream& os, const ReportContext& ctx) {
+    write_separator(os, '=', "Multicore OoO Simulator -- Pipeline Utilization");
+    kv(os, "", "Trace",        trace_label(ctx.cli));
+    kv(os, "", "Cores",        str(ctx.cfg.cores));
+    kv(os, "", "Total cycles", str(ctx.clock));
+    if (ctx.cli.tag) kv(os, "", "Tag", *ctx.cli.tag);
+    os << '\n';
+    write_utilization(os, ctx);
+}
+
 void write_csv(std::ostream& os, const ReportContext& ctx) {
     os << "core,cycles,instructions_retired,instructions_fetched,"
           "ipc,cpi,branch_mispredictions,mpki,"
@@ -762,6 +1012,7 @@ fs::path build_run_dir_pre(const SimConfig& cfg, const CliArgs& cli,
     std::string stem;
     if (cli.trace_dir)       stem = cli.trace_dir->filename().string();
     else if (cli.trace_list) stem = cli.trace_list->stem().string();
+    else if (cli.program)    stem = cli.program->stem().string();
     std::string name = stem + "_" + proto_short(proto_label) + "_c" +
                        str(cfg.cores);
     if (cli.tag && !cli.tag->empty()) name += "_" + *cli.tag;
@@ -784,11 +1035,13 @@ bool log_trace_enabled() {
 int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
     if (cli.trace) {
         LOG_ERROR("default mode is per-core; pass --trace-dir DIR (with "
-                  "p<i>.champsimtrace files) or --trace-list FILE, not --trace");
+                  "p<i>.champsimtrace files) or --trace-list FILE or "
+                  "--program MANIFEST, not --trace");
         return 1;
     }
-    if (!cli.trace_dir && !cli.trace_list) {
-        LOG_ERROR("default mode requires --trace-dir DIR or --trace-list FILE");
+    if (!cli.trace_dir && !cli.trace_list && !cli.program) {
+        LOG_ERROR("default mode requires --trace-dir DIR, --trace-list FILE, "
+                  "or --program MANIFEST");
         return 1;
     }
     if (cfg.interconnect.topology != "ring") {
@@ -801,7 +1054,35 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
         return 2;
     }
 
-    const auto trace_paths = resolve_per_core_traces(cli, cfg.cores);
+    // --program: multi-thread CasimV2 mode. Parse the manifest up
+    // front so we can validate cores==threads before anything else
+    // (cheaper to fail here than after we've allocated cache state).
+    std::optional<trace::ProgramManifest> manifest;
+    std::unique_ptr<sync::SyncCoordinator> sync_coord;
+    if (cli.program) {
+        try {
+            manifest = trace::parse_program_manifest(*cli.program);
+        } catch (const trace::ManifestError& e) {
+            LOG_ERROR("program manifest: " << e.what());
+            return 1;
+        }
+        if (static_cast<int>(manifest->thread_count) != cfg.cores) {
+            LOG_ERROR("--program: manifest threads=" << manifest->thread_count
+                      << " but cores=" << cfg.cores
+                      << "; v1 requires cores==threads (no scheduler "
+                         "multiplexing yet)");
+            return 1;
+        }
+        sync_coord = std::make_unique<sync::SyncCoordinator>(manifest->thread_count);
+        LOG_INFO("--program: " << manifest->name << " ("
+                 << manifest->thread_count << " threads)");
+    }
+
+    // Legacy --trace-dir / --trace-list path; --program supplies its
+    // own paths from the manifest below.
+    const auto trace_paths = cli.program
+        ? manifest->paths
+        : resolve_per_core_traces(cli, cfg.cores);
 
     const auto settings = to_settings(cfg);
     const bool shared_lls = settings.cache_mode == coherence::CacheMode::SharedLls;
@@ -880,13 +1161,24 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
             cs->l2->set_coherence_sink(cs->adapter.get());
         }
 
-        cs->reader = std::make_unique<trace::Reader>(
-            trace_paths[i], trace::Variant::Standard);
+        const auto variant = cli.program ? trace::Variant::CasimV2
+                                         : trace::Variant::Standard;
+        cs->reader = std::make_unique<trace::Reader>(trace_paths[i], variant);
+        if (sync_coord) {
+            // 1:1 thread-to-core: tid == core index. Manifest order
+            // already enforced this (paths[i] == t<i>).
+            cs->reader->set_sync_sink(sync_coord.get(),
+                                      static_cast<std::uint32_t>(i));
+        }
         cs->core = std::make_unique<ooo::OooCore>(
             to_ooo_config(cfg), *cs->pred, *cs->l1, *cs->reader);
         if (trace_logger) {
             cs->core->set_trace_logger(trace_logger.get(), i);
         }
+        // Pre-ThreadScheduler: each core runs one fixed thread,
+        // identified by its core index. Once a scheduler exists this
+        // becomes a per-context-switch update from the scheduler.
+        cs->core->set_active_tid(static_cast<std::uint32_t>(i));
 
         stack_owners.push_back(std::move(cs));
     }
@@ -960,11 +1252,12 @@ int run_full_mode(const SimConfig& cfg, const CliArgs& cli) {
             LOG_WARN("could not open " << p << " for writing");
         }
     };
-    write_to("report.rpt",    [&](std::ostream& o){ write_overview(o, ctx); });
-    write_to("config.rpt",    [&](std::ostream& o){ write_config_only(o, ctx); });
-    write_to("stats.rpt",     [&](std::ostream& o){ write_stats(o, ctx); });
-    write_to("coherence.rpt", [&](std::ostream& o){ write_coherence_file(o, ctx); });
-    write_to("report.csv",    [&](std::ostream& o){ write_csv(o, ctx); });
+    write_to("report.rpt",      [&](std::ostream& o){ write_overview(o, ctx); });
+    write_to("config.rpt",      [&](std::ostream& o){ write_config_only(o, ctx); });
+    write_to("stats.rpt",       [&](std::ostream& o){ write_stats(o, ctx); });
+    write_to("coherence.rpt",   [&](std::ostream& o){ write_coherence_file(o, ctx); });
+    write_to("utilization.rpt", [&](std::ostream& o){ write_utilization_file(o, ctx); });
+    write_to("report.csv",      [&](std::ostream& o){ write_csv(o, ctx); });
     LOG_INFO("wrote reports to " << run_dir_pre);
 
     return completed ? 0 : 5;
