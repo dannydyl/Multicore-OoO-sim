@@ -116,6 +116,62 @@ TEST_CASE("Cache::coherence_invalidate drops resident block silently",
     REQUIRE(c.stats().coherence_invals == 1);
 }
 
+TEST_CASE("Cache::coherence_clean clears dirty bit on resident block",
+          "[cache][coherence-sink][a2b]") {
+    // A.2b regression: RECALL_GOTO_S with dirty=false (MSI/MESI M->S
+    // transition) must drop the L1 dirty bit so a subsequent eviction
+    // doesn't propagate a stale dirty flag into on_evict, which under
+    // A.3 would trigger a phantom memory_write.
+    //
+    // Two-arm test: same setup, evict the line and compare writebacks
+    // with vs without coherence_clean. With clean, no writeback fires.
+
+    auto build_with_dirty_block = []() {
+        // tiny_l1d is direct-mapped 256B / 4 sets. We bring a block
+        // into the cache and then make it dirty via a write hit.
+        auto cfg = tiny_l1d();
+        return std::make_unique<Cache>(std::move(cfg), "L1d");
+    };
+
+    auto seed = [](Cache& c) {
+        // Read 0x40 (cold miss, allocates clean since no next_level).
+        // Then Write to it (hit -> dirty=true under WBWA).
+        c.access(MemReq{0x40, Op::Read, 0});
+        // Read it again to force the clean->dirty path via subsequent
+        // write hit. (Plain Write hit on cache.cpp:306 sets dirty=true.)
+        c.access(MemReq{0x40, Op::Write, 0});
+        REQUIRE(c.block_in(0x40));
+    };
+
+    // Arm 1: leave dirty, evict. Should record a dirty writeback.
+    {
+        auto c = build_with_dirty_block();
+        seed(*c);
+        // Force eviction by accessing a different tag in the same set.
+        c->access(MemReq{0x1040, Op::Read, 0});
+        REQUIRE(c->stats().writebacks == 1);
+    }
+
+    // Arm 2: clean first, then evict. Should record zero writebacks.
+    {
+        auto c = build_with_dirty_block();
+        seed(*c);
+        c->coherence_clean(/*block_addr=*/0x40 >> 6);
+        REQUIRE(c->block_in(0x40));   // still resident
+        c->access(MemReq{0x1040, Op::Read, 0});
+        REQUIRE(c->stats().writebacks == 0);
+    }
+}
+
+TEST_CASE("coherence_clean on non-resident block is a no-op",
+          "[cache][coherence-sink][a2b]") {
+    auto cfg = tiny_l1d();
+    Cache c(std::move(cfg), "L1d");
+    REQUIRE_FALSE(c.block_in(0x40));
+    c.coherence_clean(/*block_addr=*/0x40 >> 6);  // must not crash
+    REQUIRE_FALSE(c.block_in(0x40));
+}
+
 TEST_CASE("Sink-wired eviction notifies for both dirty and clean victims",
           "[cache][coherence-sink][evict]") {
     RecordingSink sink;

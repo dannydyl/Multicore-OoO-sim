@@ -100,6 +100,14 @@ public:
     void mark_ready(std::uint64_t id);
     void coherence_invalidate(std::uint64_t block_addr);
 
+    // Clear the local dirty bit on a resident block without otherwise
+    // touching it. Used by the adapter on a clean-destination
+    // downgrade (e.g. MSI/MESI M->S via RECALL_GOTO_S): the line stays
+    // resident but its data is no longer locally dirty (the directory
+    // wrote it back to memory or another core took ownership). No-op
+    // if the block isn't resident.
+    void coherence_clean(std::uint64_t block_addr);
+
     const CacheStats& stats() const { return stats_; }
     const std::string& name() const { return name_; }
     const Config&      cfg()  const { return cfg_; }

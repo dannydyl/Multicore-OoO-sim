@@ -538,4 +538,21 @@ void Cache::coherence_invalidate(std::uint64_t block_addr) {
     }
 }
 
+void Cache::coherence_clean(std::uint64_t block_addr) {
+    // Clean-destination downgrade: line stays resident but is no
+    // longer dirty here (the directory or peer took ownership of
+    // the dirty data). Without this, a subsequent eviction would
+    // propagate the stale dirty bit into on_evict(dirty=true) and
+    // the directory would count a phantom memory_write.
+    const std::uint64_t tag   = get_tag(block_addr);
+    const std::uint64_t index = get_index(block_addr);
+    auto& set = rows[index];
+    for (auto& block : set.LRU_list) {
+        if (block.valid && block.tag == tag) {
+            block.dirty = false;
+            return;
+        }
+    }
+}
+
 } // namespace comparch::cache

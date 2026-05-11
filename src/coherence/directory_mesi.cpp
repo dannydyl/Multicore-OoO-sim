@@ -58,7 +58,11 @@ void DirectoryController::MESI_tick() {
                 for (NodeId i = 0; i < settings_.num_procs; ++i) {
                     if (entry->presence[i]) target_node = i;
                 }
-                send_Request(target_node, tag_to_send, MessageKind::RECALL_GOTO_S);
+                // MESI M->S: recipient flushes dirty data via DATA_dir
+                // and transitions to S (clean). Adapter must clear L1
+                // dirty bit so a later eviction doesn't double-count.
+                send_Request(target_node, tag_to_send,
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/false);
                 entry->state                 = DirState::MS;
                 entry->req_node_in_transient = request->src;
                 dequeue();
@@ -109,7 +113,11 @@ void DirectoryController::MESI_tick() {
                 for (NodeId i = 0; i < settings_.num_procs; ++i) {
                     if (entry->presence[i]) target_node = i;
                 }
-                send_Request(target_node, tag_to_send, MessageKind::RECALL_GOTO_S);
+                // MESI E->S: recipient was clean Exclusive; transitions
+                // to clean S. dirty=false is a no-op on the L1 dirty
+                // bit (already false) but kept for protocol consistency.
+                send_Request(target_node, tag_to_send,
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/false);
                 entry->state                 = DirState::ES;
                 entry->req_node_in_transient = request->src;
                 dequeue();

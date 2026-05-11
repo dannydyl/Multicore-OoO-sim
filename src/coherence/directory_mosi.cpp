@@ -55,7 +55,10 @@ void DirectoryController::MOSI_tick() {
                         entry->o_f_id  = i;
                     }
                 }
-                send_Request(target_node, tag_to_send, MessageKind::RECALL_GOTO_S);
+                // MOSI M->O: recipient transitions to Owner state,
+                // which carries dirty data. L1 dirty bit must stay set.
+                send_Request(target_node, tag_to_send,
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/true);
                 entry->state                 = DirState::MO;
                 entry->req_node_in_transient = request->src;
                 dequeue();
@@ -152,8 +155,10 @@ void DirectoryController::MOSI_tick() {
                         "MOSI dir: saw GETS from proc already in O");
                 }
                 tag_to_send = request->block;
+                // MOSI O->O: recipient stays Owner (dirty). Keep L1
+                // dirty bit set.
                 send_Request(entry->o_f_id, tag_to_send,
-                             MessageKind::RECALL_GOTO_S);
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/true);
                 entry->req_node_in_transient = request->src;
                 entry->state                 = DirState::OO;
                 dequeue();

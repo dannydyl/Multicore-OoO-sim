@@ -96,8 +96,10 @@ void DirectoryController::cycle_queue() {
     request_next.push_back(head);
 }
 
-void DirectoryController::send_Request(NodeId dest, BlockId tag, MessageKind kind) {
+void DirectoryController::send_Request(NodeId dest, BlockId tag,
+                                       MessageKind kind, bool dirty) {
     auto* req = new Message(id_, dest, tag, kind, settings_);
+    req->dirty = dirty;
     my_node->ntwk_out_next.push_back(req);
 }
 

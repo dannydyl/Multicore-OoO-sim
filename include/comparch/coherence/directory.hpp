@@ -86,7 +86,14 @@ public:
     Message*  poll_queue();
     void      dequeue();
     void      cycle_queue();
-    void      send_Request(NodeId dest, BlockId tag, MessageKind kind);
+    // `dirty` annotates the message for the recipient. For
+    // RECALL_GOTO_S it tells the destination adapter whether the
+    // L1 should keep its dirty bit (true = stays dirty owner;
+    // false = transitions to clean and L1 dirty bit must be
+    // cleared so a later eviction doesn't trigger a phantom
+    // memory_write).
+    void      send_Request(NodeId dest, BlockId tag, MessageKind kind,
+                           bool dirty = false);
 
     // Phase 5B: an L1+L2 in a real CMP can self-evict. The
     // CoherenceAdapter sends DATA_WB (= "WRITEBACK") on any eviction;

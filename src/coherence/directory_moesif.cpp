@@ -123,7 +123,10 @@ void DirectoryController::MOESIF_tick() {
                         entry->o_f_id  = i;
                     }
                 }
-                send_Request(target_node, tag_to_send, MessageKind::RECALL_GOTO_S);
+                // MOESIF M->O: recipient transitions to Owner (carries
+                // dirty data). Keep L1 dirty bit set.
+                send_Request(target_node, tag_to_send,
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/true);
                 entry->state                 = DirState::MO;
                 entry->req_node_in_transient = request->src;
                 dequeue();
@@ -176,7 +179,11 @@ void DirectoryController::MOESIF_tick() {
                         entry->o_f_id  = i;
                     }
                 }
-                send_Request(target_node, tag_to_send, MessageKind::RECALL_GOTO_S);
+                // MOESIF E->F: recipient was clean E, transitions to
+                // clean F (Forwarder). dirty stays false (no-op on
+                // L1 dirty bit, kept for consistency).
+                send_Request(target_node, tag_to_send,
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/false);
                 entry->state                 = DirState::EF;
                 entry->req_node_in_transient = request->src;
                 dequeue();
@@ -231,8 +238,9 @@ void DirectoryController::MOESIF_tick() {
                         "MOESIF dir: saw GETS from proc already in F");
                 }
                 tag_to_send = request->block;
+                // MOESIF F->F: recipient stays Forwarder (clean).
                 send_Request(entry->o_f_id, tag_to_send,
-                             MessageKind::RECALL_GOTO_S);
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/false);
                 entry->req_node_in_transient = request->src;
                 entry->state                 = DirState::FF;
                 dequeue();
@@ -325,8 +333,10 @@ void DirectoryController::MOESIF_tick() {
                         "MOESIF dir: saw GETS from proc already in O");
                 }
                 tag_to_send = request->block;
+                // MOESIF O->O: recipient stays Owner (dirty). Keep
+                // L1 dirty bit set.
                 send_Request(entry->o_f_id, tag_to_send,
-                             MessageKind::RECALL_GOTO_S);
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/true);
                 entry->req_node_in_transient = request->src;
                 entry->state                 = DirState::OO;
                 dequeue();

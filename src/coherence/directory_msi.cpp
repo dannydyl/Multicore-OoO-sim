@@ -56,7 +56,12 @@ void DirectoryController::MSI_tick() {
                     if (entry->presence[i]) { old_owner = static_cast<NodeId>(i); break; }
                 }
                 entry->req_node_in_transient = request->src;
-                send_Request(old_owner, request->block, MessageKind::RECALL_GOTO_S);
+                // MSI: recipient was in M, transitions to S (clean).
+                // Adapter must clear L1 dirty bit so the next eviction
+                // doesn't trigger a phantom memory_write under A.3
+                // (which now trusts the source-side dirty flag).
+                send_Request(old_owner, request->block,
+                             MessageKind::RECALL_GOTO_S, /*dirty=*/false);
                 tag_to_send = request->block;
                 entry->state = DirState::MS;
                 dequeue();

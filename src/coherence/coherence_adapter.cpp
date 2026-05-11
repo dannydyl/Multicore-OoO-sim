@@ -160,23 +160,24 @@ void CoherenceAdapter::on_ntwk_event(const Message& req) {
             break;
         case MessageKind::RECALL_GOTO_S:
             // Downgrade-on-remote-read. RECALL_GOTO_S is overloaded
-            // across protocols; the destination state determines
-            // whether this core is still responsible for writeback:
+            // across protocols by destination state:
             //   MSI    M->S        : clean (dir wrote back to memory)
             //   MESI   M->S, E->S  : clean
             //   MOSI   M->O, O->O  : owner stays dirty
             //   MOESIF E->F, F->F  : clean
             //   MOESIF M->O, O->O  : owner stays dirty
-            // The adapter can't tell clean-dest from owner-dest from
-            // the message alone, so we leave the cache's dirty bit
-            // untouched. Correctness is preserved either way: on a
-            // later clean eviction, on_evict ignores the cache-local
-            // dirty flag and the directory decides memory_writes
-            // from its own state (handle_writeback in directory.cpp),
-            // so a stale dirty bit cannot cause a phantom memory
-            // writeback. The only artifact is the per-cache
-            // stats_.writebacks counter, which over-counts dirty
-            // evictions for MSI/MESI M->S downgrades.
+            // The directory sets req.dirty at send time so the
+            // adapter doesn't have to know which case applies.
+            // false = recipient transitions to a clean state; we
+            // clear the L1/L2 dirty bit so a later eviction doesn't
+            // propagate a stale-dirty flag into on_evict and
+            // trigger a phantom memory_write at the directory
+            // (handle_writeback now trusts the source-side dirty
+            // flag — see A.3 commit).
+            if (!req.dirty) {
+                l1d_->coherence_clean(cache_block);
+                if (l2d_) l2d_->coherence_clean(cache_block);
+            }
             break;
         default:
             break;
