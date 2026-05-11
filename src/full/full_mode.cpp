@@ -709,9 +709,21 @@ void write_detailed_per_core(std::ostream& os, const ReportContext& ctx) {
 // pack — there is no per-core split today.
 void write_coherence(std::ostream& os, const ReportContext& ctx) {
     const auto& cs = ctx.cs;
+
+    // `cache_accesses` in the shared CoherenceStats is bumped by
+    // FiciCpu (used by --mode coherence only). In full mode the L1
+    // is driven by the OoO core via the adapter, which doesn't go
+    // through FiciCpu, so the counter would read 0. Aggregate per-
+    // core L1 accesses instead — same meaning, correct under either
+    // mode.
+    std::uint64_t l1_accesses_total = 0;
+    for (auto& s : ctx.stacks) l1_accesses_total += s->l1->stats().accesses;
+    const auto cache_accesses_total =
+        cs.cache_accesses != 0 ? cs.cache_accesses : l1_accesses_total;
+
     write_separator(os, '=', "Coherence + memory");
     kv(os, "", "Protocol",                  ctx.proto_label);
-    kv(os, "", "Cache accesses (system)",   str(cs.cache_accesses));
+    kv(os, "", "Cache accesses (system)",   str(cache_accesses_total));
     kv(os, "", "Cache misses (system)",     str(cs.cache_misses));
     kv(os, "", "Silent upgrades",           str(cs.silent_upgrades));
     kv(os, "", "Cache-to-cache transfers",  str(cs.c2c_transfers));
@@ -721,17 +733,14 @@ void write_coherence(std::ostream& os, const ReportContext& ctx) {
     // Derived ratios. Useful for comparing protocols at a glance:
     //   c2c_share  = how many misses were satisfied by a peer cache
     //                (intervention) vs. memory.
-    //   wb_per_inv = how often invalidations turn into actual dirty
-    //                evictions; tells you how chatty a write-heavy
-    //                workload is on this protocol.
     if (cs.cache_misses != 0) {
         const double c2c_share = static_cast<double>(cs.c2c_transfers) /
                                  static_cast<double>(cs.cache_misses);
         kv(os, "", "C2C / miss",            fix(c2c_share, 4));
     }
-    if (cs.cache_accesses != 0) {
+    if (cache_accesses_total != 0) {
         const double system_miss_rate = static_cast<double>(cs.cache_misses) /
-                                        static_cast<double>(cs.cache_accesses);
+                                        static_cast<double>(cache_accesses_total);
         kv(os, "", "System miss rate",      fix(100.0 * system_miss_rate, 3) + " %");
     }
 

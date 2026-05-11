@@ -48,8 +48,14 @@ DirEntry drive_one(Protocol proto,
     entry->active_sharers = initial_presence_src ? 1u : 0u;
     entry->o_f_id         = initial_o_f_id;
 
-    // Queue a writeback from `src`.
+    // Queue a writeback from `src`. The source-side dirty flag is
+    // what the real adapter would put on the message (mirrors the
+    // L1 line's actual dirty bit at eviction time) and is what
+    // handle_writeback uses to bump memory_writes — match the
+    // entry's initial_dirty here so the tests describe the same
+    // scenario the production code produces.
     auto* msg = new Message(src, num_procs, /*block=*/(0x40 >> 6), kind, s);
+    if (kind == MessageKind::DATA_WB) msg->dirty = initial_dirty;
     dir.request_queue.push_back(msg);
 
     dir.tick(/*clock=*/1);
@@ -121,4 +127,43 @@ TEST_CASE("MOESIF: WRITEBACK from F-holder triggers memory_writes",
     REQUIRE(stats.memory_writes == 1);
     REQUIRE(entry.active_sharers == 0);
     REQUIRE(entry.state == DirState::I);
+}
+
+// A.3 regression: prior bug was that memory_writes was inferred from
+// the directory's tracked state, which can already have transitioned
+// off M/O/F by the time the WB drains. With the source-side dirty
+// flag on the message, memory_writes counts correctly even when the
+// directory thinks the line is in S at the time the WB is processed.
+TEST_CASE("Dirty WB still bumps memory_writes when dir state has moved off M",
+          "[coherence][writeback][a3]") {
+    CoherenceStats stats;
+    // Simulate the race: source 2 evicted a dirty M line, but by the
+    // time the WB lands the directory has transitioned to S (e.g.
+    // because another node's GETS was processed first and the line
+    // was already being shared back). The line's actual data was
+    // dirty on the source — memory_writes must still fire.
+    const auto entry = drive_one(
+        Protocol::MESI, /*src=*/2, MessageKind::DATA_WB,
+        DirState::S, /*dirty=*/true, /*presence_src=*/true,
+        /*o_f_id=*/static_cast<NodeId>(-1), stats);
+
+    REQUIRE(stats.memory_writes == 1);
+    REQUIRE_FALSE(entry.presence[2]);
+}
+
+TEST_CASE("Clean WB does not bump memory_writes even from former M holder",
+          "[coherence][writeback][a3]") {
+    CoherenceStats stats;
+    // Symmetric: the line was clean at eviction (e.g. a clean S
+    // share got dropped). The directory might still think we're
+    // in M (rare, but possible during a transient race). Without
+    // the source-side flag we'd have over-counted; with it we
+    // correctly skip the memory write.
+    const auto entry = drive_one(
+        Protocol::MESI, /*src=*/0, MessageKind::DATA_WB,
+        DirState::M, /*dirty=*/false, /*presence_src=*/true,
+        /*o_f_id=*/static_cast<NodeId>(-1), stats);
+    (void)entry;
+
+    REQUIRE(stats.memory_writes == 0);
 }

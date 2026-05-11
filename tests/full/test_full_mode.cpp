@@ -281,6 +281,52 @@ TEST_CASE("full mode: shared_lls + inclusion=inclusive is rejected",
                       comparch::ConfigError);
 }
 
+TEST_CASE("full mode: coherence.rpt reports nonzero Cache accesses",
+          "[full][a3][report]") {
+    // A.3 regression. Cache accesses (system) used to read 0 in full
+    // mode because the FiciCpu (which bumps cs.cache_accesses) only
+    // runs under --mode coherence. The report writer now sums per-
+    // core L1 accesses as a fallback, so any non-trivial workload
+    // should report > 0 accesses to memory.
+    const auto dir = make_private_load_trace_dir(/*cores=*/2, /*n=*/32, "a3acc");
+    comparch::SimConfig cfg;
+    cfg.cores              = 2;
+    cfg.coherence.protocol = "mesi";
+    comparch::CliArgs cli;
+    cli.trace_dir = dir;
+    cli.mode      = comparch::Mode::Full;
+    CoutCapture cap;
+    REQUIRE(comparch::full::run_full_mode(cfg, cli) == 0);
+
+    // Find the coherence.rpt from the run and verify cache accesses > 0.
+    bool found = false;
+    for (const auto& root : {fs::path("report"),
+                              fs::path("tests/report"),
+                              fs::path("../report")}) {
+        if (!fs::exists(root)) continue;
+        for (auto& entry : fs::recursive_directory_iterator(root)) {
+            if (!entry.is_regular_file() ||
+                entry.path().filename() != "coherence.rpt") continue;
+            if (entry.path().parent_path().filename().string()
+                    .find("a3acc") == std::string::npos) continue;
+            std::ifstream f(entry.path());
+            std::stringstream ss; ss << f.rdbuf();
+            const auto txt = ss.str();
+            const auto pos = txt.find("Cache accesses (system)");
+            REQUIRE(pos != std::string::npos);
+            // Read the number after the ": "
+            const auto colon = txt.find(":", pos);
+            const auto eol   = txt.find("\n", colon);
+            const auto num   = std::stoull(txt.substr(colon + 1, eol - colon));
+            REQUIRE(num > 0);
+            found = true;
+            break;
+        }
+        if (found) break;
+    }
+    REQUIRE(found);
+}
+
 TEST_CASE("full mode: shared_lls + inclusion=non_inclusive runs cleanly",
           "[full][inclusion]") {
     // Symmetric positive test: non_inclusive is the supported label

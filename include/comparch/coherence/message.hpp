@@ -42,10 +42,18 @@ struct Message {
     Timestamp   req_time = 0;
     int         flits = 0;
     int         tof   = 0;          // time-of-flight remaining (cycles)
+    // For DATA_WB: was the evicted line dirty at the source? Set
+    // by the adapter from the CoherenceSink::on_evict's `dirty`
+    // arg; consumed by DirectoryController::handle_writeback to
+    // bump memory_writes accurately. Without this flag the
+    // directory had to guess from its own (possibly stale)
+    // tracked state, missing memory_writes when the directory
+    // had transitioned out of M/O/F before the WB landed.
+    bool        dirty = false;
 
     Message() = default;
 
-    // Project3 Request::Request — flit count derived from Settings.
+    // Flit count derived from Settings.
     Message(NodeId src_, NodeId dst_, BlockId block_, MessageKind kind_,
             const Settings& s);
 };

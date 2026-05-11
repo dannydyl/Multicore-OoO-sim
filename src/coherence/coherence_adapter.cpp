@@ -88,15 +88,15 @@ void CoherenceAdapter::on_miss(std::uint64_t block_addr, cache::Op op) {
 }
 
 void CoherenceAdapter::on_evict(std::uint64_t block_addr, bool dirty) {
-    // Cache reports block_addr in the shifted form. The directory's
-    // handle_writeback distinguishes dirty (memory_writes++) vs clean
-    // by the directory's own tracked state, not by the message kind,
-    // so we use DATA_WB regardless. The `dirty` flag is reflected in
-    // local stats only.
-    (void)dirty;
+    // Cache reports block_addr in the shifted form. Pass the source-
+    // side dirty flag in the message so the directory can bump
+    // memory_writes without having to guess from its own tracked
+    // state (which may already have moved off M/O/F by the time the
+    // WB is dequeued).
     const auto byte_block = to_byte_block(block_addr, settings_.block_size_log2);
     auto* msg = new Message(id_, settings_.num_procs, byte_block,
                             MessageKind::DATA_WB, settings_);
+    msg->dirty = dirty;
     coh_cache_->my_node->ntwk_out_next.push_back(msg);
 }
 

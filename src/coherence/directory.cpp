@@ -117,9 +117,17 @@ bool DirectoryController::handle_writeback(DirEntry* entry,
         return true;
     }
 
-    // The directory's own state tells us whether the dropping node was
-    // the dirty owner: M / O / F. (Project3's MOESIF reuses 'F' for the
-    // forwarder; in MESI it's a clean Exclusive holder.)
+    // Memory-write accounting: trust the source-side `dirty` flag on
+    // the WB message. The directory's tracked state can lag a dirty
+    // eviction (e.g. an unrelated transition moved the line out of
+    // M/O/F before the WB drained), so relying on directory state
+    // alone undercounts memory_writes. The flag came from the cache
+    // line's own dirty bit at eviction time — authoritative.
+    const bool source_dirty = request.dirty;
+
+    // Whether the source held the line in M / O / F at the directory's
+    // last observation. Still useful for the state-transition path
+    // below (deciding whether remaining sharers collapse to S).
     const bool was_dirty_holder =
         (entry->state == DirState::M || entry->state == DirState::O ||
          entry->state == DirState::F) &&
@@ -133,7 +141,7 @@ bool DirectoryController::handle_writeback(DirEntry* entry,
         if (entry->active_sharers > 0) --entry->active_sharers;
     }
 
-    if (was_dirty_holder || was_m_holder) {
+    if (source_dirty) {
         ++stats_.memory_writes;
         entry->dirty = false;
     }
