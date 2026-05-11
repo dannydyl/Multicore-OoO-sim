@@ -21,19 +21,10 @@ configurable interconnect with a directory-based coherence protocol.
                           DRAM
 ```
 
-This is a personal project under active development. The implementation is
-being assembled incrementally; the current state is **Phase 0 (skeleton only)**.
-
-## Status
-
-- [x] Phase 0 — skeleton, build system, CLI, JSON config
-- [~] Phase 1 — canonical trace format and DynamoRIO-based tracer (reader/writer + synthetic generator landed; tracer pending)
-- [x] Phase 2 — L1/L2 cache subsystem
-- [x] Phase 3 — branch predictors
-- [x] Phase 4 — single-core out-of-order pipeline
-- [x] Phase 5A — multi-core + cache coherence (`--mode coherence`; MI/MSI/MESI/MOSI/MOESIF on a RING)
-- [x] Phase 5B — full multi-core OoO + coherence (the default mode; OoO cores + private L1+L2 + ring + directory)
-- [ ] Phase 6 — polish, results, plots
+Personal project, continuously evolving. The core simulator
+(OoO + cache + coherence + multi-thread sync) is complete and
+tested. See [STATUS.md](STATUS.md) for the current snapshot of
+what's done, what's known to be missing, and what's deferred.
 
 ## Build
 
