@@ -108,6 +108,13 @@ public:
     // if the block isn't resident.
     void coherence_clean(std::uint64_t block_addr);
 
+    // Set the local dirty bit on a resident block. Used by the adapter
+    // when a store-completion fill lands on a line that was already
+    // resident (because the cache had it in S/E and the coherence
+    // round-trip was just for M-state authorization). No-op if the
+    // block isn't resident.
+    void coherence_set_dirty(std::uint64_t block_addr);
+
     const CacheStats& stats() const { return stats_; }
     const std::string& name() const { return name_; }
     const Config&      cfg()  const { return cfg_; }

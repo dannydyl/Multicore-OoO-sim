@@ -289,12 +289,30 @@ AccessResult Cache::access(const MemReq& req) {
     if (cfg_.write_policy == WritePolicy::WBWA) {
         // ===== WBWA access path — mirror of project1's L1 sim_access =====
         bool HIT = false;
+        // Set when we found the tag resident but the line was clean
+        // and the write needs M-state authorization from coherence.
+        // Treated as a forced miss below (sink->on_miss with Write),
+        // but the local block stays resident — the adapter will mark
+        // it dirty via coherence_set_dirty when the upgrade completes.
+        bool needs_upgrade = false;
 
         // Linear search through the set. On match: bookkeeping + splice
         // to MRU + break.
         for (auto block = set.LRU_list.begin();
              block != set.LRU_list.end(); ++block) {
             if (block->tag == tag && block->valid) {
+                if (rw == 'W' && !block->dirty && cfg_.coherence_sink) {
+                    // Clean line + write + coherence-managed: line is
+                    // in S or E at the agent, not M. Without consulting
+                    // the agent we'd silently set dirty=true and skip
+                    // the GETM, missing every S->M upgrade in stats.
+                    // Fall through to the miss-style coherence call
+                    // below.
+                    needs_upgrade = true;
+                    set.LRU_list.splice(set.LRU_list.begin(),
+                                        set.LRU_list, block);
+                    break;
+                }
                 HIT = true;
                 if (block->prefetched) {
                     // Demand access on a prefetched line -> the prefetch
@@ -312,7 +330,16 @@ AccessResult Cache::access(const MemReq& req) {
 
         unsigned downstream_latency = 0;
         bool     suspended          = false;
-        if (HIT) {
+        if (needs_upgrade) {
+            // Forced coherence consultation for S/E -> M upgrade.
+            // Don't bump misses (the line is locally resident); just
+            // route through the sink so the agent issues GETM and the
+            // adapter eventually calls coherence_set_dirty on the
+            // already-resident block when the round-trip completes.
+            ++stats_.upgrade_misses;
+            cfg_.coherence_sink->on_miss(block_addr, Op::Write);
+            suspended = true;
+        } else if (HIT) {
             ++stats_.hits;
         } else {
             ++stats_.misses;
@@ -533,6 +560,23 @@ void Cache::coherence_invalidate(std::uint64_t block_addr) {
         if (it->valid && it->tag == tag) {
             set.LRU_list.erase(it);
             ++stats_.coherence_invals;
+            return;
+        }
+    }
+}
+
+void Cache::coherence_set_dirty(std::uint64_t block_addr) {
+    // Pair with coherence_clean: the adapter calls this when a store
+    // round-trip completes for a line that was already resident (the
+    // L1 had it in S/E and only needed M-state). Without this, the
+    // dirty bit stays unset and a later eviction would silently drop
+    // the locally-modified data without a writeback.
+    const std::uint64_t tag   = get_tag(block_addr);
+    const std::uint64_t index = get_index(block_addr);
+    auto& set = rows[index];
+    for (auto& block : set.LRU_list) {
+        if (block.valid && block.tag == tag) {
+            block.dirty = true;
             return;
         }
     }

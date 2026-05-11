@@ -163,6 +163,61 @@ TEST_CASE("Cache::coherence_clean clears dirty bit on resident block",
     }
 }
 
+TEST_CASE("WBWA write hit to clean line triggers coherence upgrade",
+          "[cache][coherence-sink][a2a]") {
+    // A.2a regression: a write to a line resident-but-clean (the
+    // agent has it in S or E, not M) must consult the coherence
+    // sink for a GETM round-trip. Pre-fix, the cache silently set
+    // dirty=true and never told the agent, missing every S->M
+    // upgrade in the system stats.
+    RecordingSink sink;
+    auto cfg            = tiny_l1d();
+    cfg.coherence_sink  = &sink;
+    Cache c(std::move(cfg), "L1d");
+
+    // Bring 0x40 into the cache via a Read (fills clean — line is
+    // in S/E at the agent in a real system; locally just clean).
+    auto rd = c.access(MemReq{0x40, Op::Read, 0});
+    REQUIRE(rd.latency == kCoherenceSuspendedLatency);
+    REQUIRE(sink.miss_log.size() == 1);
+    c.mark_ready(0);   // satisfy the MSHR
+    // Sink's adapter would call cache_fill; emulate that here.
+    {
+        const auto tag = c.get_tag(0x40 >> 6);
+        const auto idx = c.get_index(0x40 >> 6);
+        c.insert_new_block(/*rw=*/'R', tag, idx, /*block_addr=*/0x40 >> 6,
+                           /*is_prefetch=*/false);
+    }
+    REQUIRE(c.block_in(0x40));
+
+    // Now write to the resident-but-clean line. With the fix this is
+    // a forced miss to the sink (Op::Write) and the access suspends.
+    sink.miss_log.clear();
+    auto wr = c.access(MemReq{0x40, Op::Write, 0});
+    REQUIRE(wr.latency == kCoherenceSuspendedLatency);
+    REQUIRE(sink.miss_log.size() == 1);
+    REQUIRE(sink.miss_log.back().op == Op::Write);
+    REQUIRE(c.stats().upgrade_misses == 1);
+
+    // Adapter would now call coherence_set_dirty on the resident line.
+    c.coherence_set_dirty(0x40 >> 6);
+
+    // Subsequent write to the now-dirty line is a fast-path hit (no
+    // further upgrade misses).
+    auto wr2 = c.access(MemReq{0x40, Op::Write, 0});
+    REQUIRE(wr2.hit);
+    REQUIRE(wr2.latency == c.cfg().hit_latency);
+    REQUIRE(c.stats().upgrade_misses == 1);   // unchanged
+}
+
+TEST_CASE("coherence_set_dirty on non-resident block is a no-op",
+          "[cache][coherence-sink][a2a]") {
+    auto cfg = tiny_l1d();
+    Cache c(std::move(cfg), "L1d");
+    REQUIRE_FALSE(c.block_in(0x40));
+    c.coherence_set_dirty(/*block_addr=*/0x40 >> 6);  // must not crash
+}
+
 TEST_CASE("coherence_clean on non-resident block is a no-op",
           "[cache][coherence-sink][a2b]") {
     auto cfg = tiny_l1d();

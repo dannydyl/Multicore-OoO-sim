@@ -25,9 +25,16 @@ struct CacheStats {
     std::uint64_t prefetch_hits     = 0;
     std::uint64_t prefetch_misses   = 0;
 
-    // Phase 5B: blocks dropped by Cache::coherence_invalidate() in
-    // response to a directory-driven REQ_INVALID / RECALL_GOTO_I.
+    // Blocks dropped by Cache::coherence_invalidate() in response to
+    // a directory-driven REQ_INVALID / RECALL_GOTO_I.
     std::uint64_t coherence_invals  = 0;
+
+    // Write-hits to lines that were locally resident but not in M
+    // state — counted as a separate bucket from misses so the regular
+    // L1 miss-rate isn't inflated by S->M upgrade traffic. Each one
+    // triggers a coherence_sink->on_miss(Op::Write) which the agent
+    // resolves with a GETM round-trip.
+    std::uint64_t upgrade_misses    = 0;
 };
 
 } // namespace comparch::cache

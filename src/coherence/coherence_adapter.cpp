@@ -41,7 +41,16 @@ void mark_block_ready(cache::Cache& c, std::uint64_t block_addr) {
 }
 
 void cache_fill(cache::Cache& c, std::uint64_t block_addr, char rw) {
-    if (c.block_in(block_addr << c.cfg().b)) return;       // already resident
+    if (c.block_in(block_addr << c.cfg().b)) {
+        // Already resident — the round-trip was a forced S/E -> M
+        // upgrade (Cache::access detected a write hit on a clean
+        // line and bounced it through the sink). Set the dirty bit
+        // so the local write commits; without this, the upgrade
+        // would just be a stat-bump and the line would silently
+        // drop modifications at eviction time.
+        if (rw == 'W') c.coherence_set_dirty(block_addr);
+        return;
+    }
     const auto tag = c.get_tag(block_addr);
     const auto idx = c.get_index(block_addr);
     c.insert_new_block(rw, tag, idx, block_addr, /*is_prefetch=*/false);
