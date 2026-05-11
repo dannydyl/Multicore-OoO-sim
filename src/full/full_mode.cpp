@@ -113,10 +113,20 @@ coherence::Settings to_settings(const SimConfig& cfg) {
     // The shared-LLS data path implements non-inclusive non-exclusive
     // (NINE): every L1 fill installs the line in LLS, but LLS evictions
     // do NOT back-invalidate L1 holders (see directory.cpp
-    // schedule_data_response, "v0 simplification"). Strict inclusive
-    // would require a back-invalidate message and per-agent handling
-    // for non-S states; until then both labels accept the same path,
-    // and 'non_inclusive' is the honest one.
+    // schedule_data_response). Strict inclusive would require a
+    // back-invalidate message kind plus per-agent handling for
+    // non-S states; that hasn't been implemented yet, so accepting
+    // `inclusion: inclusive` silently would mislabel results. Reject
+    // it explicitly until the back-invalidate path exists.
+    if (s.cache_mode == coherence::CacheMode::SharedLls &&
+        s.inclusion  == coherence::Inclusion::Inclusive) {
+        throw ConfigError(
+            "coherence.inclusion='inclusive' is not yet implemented for "
+            "shared_lls mode. The current data path is non-inclusive "
+            "non-exclusive (NINE): LLS evictions do not back-invalidate "
+            "L1 holders. Use coherence.inclusion='non_inclusive' to make "
+            "the label match the actual behavior.");
+    }
     // LLS geometry. Always populated so logs/reports can render it even
     // in private_l2 mode (the directory just won't consult an LlsCache).
     const std::size_t bs = static_cast<std::size_t>(cfg.lls.block_size);

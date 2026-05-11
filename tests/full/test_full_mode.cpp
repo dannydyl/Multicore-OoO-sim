@@ -264,6 +264,40 @@ int run_program(const fs::path& manifest, int cores, const std::string& proto) {
 
 } // namespace
 
+TEST_CASE("full mode: shared_lls + inclusion=inclusive is rejected",
+          "[full][inclusion]") {
+    // The shared-LLS data path is NINE; selecting 'inclusive' would
+    // mislabel results. The guard must throw with a clear message.
+    const auto dir = make_alu_only_trace_dir(/*cores=*/2, /*n=*/8, "incguard");
+    comparch::SimConfig cfg;
+    cfg.cores                  = 2;
+    cfg.coherence.protocol     = "mesi";
+    cfg.coherence.cache_mode   = "shared_lls";
+    cfg.coherence.inclusion    = "inclusive";
+    comparch::CliArgs cli;
+    cli.trace_dir = dir;
+    cli.mode      = comparch::Mode::Full;
+    REQUIRE_THROWS_AS(comparch::full::run_full_mode(cfg, cli),
+                      comparch::ConfigError);
+}
+
+TEST_CASE("full mode: shared_lls + inclusion=non_inclusive runs cleanly",
+          "[full][inclusion]") {
+    // Symmetric positive test: non_inclusive is the supported label
+    // and produces a successful run.
+    const auto dir = make_alu_only_trace_dir(/*cores=*/2, /*n=*/8, "incok");
+    comparch::SimConfig cfg;
+    cfg.cores                  = 2;
+    cfg.coherence.protocol     = "mesi";
+    cfg.coherence.cache_mode   = "shared_lls";
+    cfg.coherence.inclusion    = "non_inclusive";
+    comparch::CliArgs cli;
+    cli.trace_dir = dir;
+    cli.mode      = comparch::Mode::Full;
+    CoutCapture cap;
+    REQUIRE(comparch::full::run_full_mode(cfg, cli) == 0);
+}
+
 TEST_CASE("full mode: --program 2-thread sync trace runs end-to-end",
           "[full][program][sync]") {
     auto dir = fs::temp_directory_path() / "full_prog_lock2";
