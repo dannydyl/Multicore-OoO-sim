@@ -425,6 +425,37 @@ TEST_CASE("Reader+SyncSink: reject stalls fetch; later approve unblocks",
     REQUIRE_FALSE(r.blocked());
 }
 
+TEST_CASE("CasimV2 is_mul flag survives round-trip", "[trace][v2][a4]") {
+    std::stringstream buf(std::ios::in | std::ios::out | std::ios::binary);
+    {
+        Writer w(buf, Variant::CasimV2);
+        FileHeader h; h.thread_id = 0; h.thread_count = 1;
+        w.write_header(h);
+        Record m{}; m.ip = 0xAA; m.is_mul = true;
+        Record a{}; a.ip = 0xBB;                       // plain ALU
+        Record b{}; b.ip = 0xCC; b.is_branch = true;   // branch (mul=false)
+        w.write(m);
+        w.write(a);
+        w.write(b);
+    }
+    Reader r(buf, Variant::CasimV2);
+    Record got{};
+
+    REQUIRE(r.next(got));
+    REQUIRE(got.ip == 0xAA);
+    REQUIRE(got.is_mul == true);
+    REQUIRE(got.is_branch == false);
+
+    REQUIRE(r.next(got));
+    REQUIRE(got.ip == 0xBB);
+    REQUIRE(got.is_mul == false);
+
+    REQUIRE(r.next(got));
+    REQUIRE(got.ip == 0xCC);
+    REQUIRE(got.is_mul == false);
+    REQUIRE(got.is_branch == true);
+}
+
 TEST_CASE("CasimV2 1024-record stream round-trips via next_any", "[trace][v2]") {
     std::mt19937_64 rng(0xFEEDFACEDEADBEEFULL);
     std::vector<Record> records;

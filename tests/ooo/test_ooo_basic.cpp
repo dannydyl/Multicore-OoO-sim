@@ -112,6 +112,64 @@ std::unique_ptr<std::stringstream> records_to_stream(const std::vector<Record>& 
 
 } // namespace
 
+TEST_CASE("classify recognizes is_mul hint and routes to Opcode::Mul",
+          "[ooo][classify][a4]") {
+    // A.4: ChampSim records don't carry an opcode class so MUL FUs
+    // were unused. CasimV2's is_mul flag now routes a record to the
+    // MUL pipeline. Verify classify() does this, including the
+    // priority rules (memory ops and branches still win over is_mul).
+    using comparch::ooo::classify;
+    using comparch::ooo::Opcode;
+    using comparch::trace::Record;
+
+    // Plain MUL hint -> Opcode::Mul.
+    Record m{}; m.ip = 0x10; m.is_mul = true;
+    REQUIRE(classify(m, 1).opcode == Opcode::Mul);
+
+    // is_mul + load address: load wins.
+    Record ml{}; ml.ip = 0x20; ml.is_mul = true;
+    ml.source_memory[0] = 0x100;
+    REQUIRE(classify(ml, 2).opcode == Opcode::Load);
+
+    // is_mul + branch: branch wins.
+    Record mb{}; mb.ip = 0x30; mb.is_mul = true; mb.is_branch = true;
+    REQUIRE(classify(mb, 3).opcode == Opcode::Branch);
+
+    // Plain ALU (no flags) still goes to Opcode::Alu.
+    Record a{}; a.ip = 0x40;
+    REQUIRE(classify(a, 4).opcode == Opcode::Alu);
+}
+
+TEST_CASE("MUL pipeline fires when trace emits is_mul records",
+          "[ooo][mul][a4]") {
+    // A.4: end-to-end. Build a v2 stream of mostly-MUL records,
+    // run an OoO core, verify MUL FUs are actually busy (mul_busy_sum
+    // > 0 in the stats — was always 0 under ChampSim-only traces).
+    std::stringstream ss(std::ios::in | std::ios::out | std::ios::binary);
+    {
+        Writer w(ss, Variant::CasimV2);
+        comparch::trace::FileHeader h;
+        h.thread_id = 0; h.thread_count = 1;
+        w.write_header(h);
+        for (int i = 0; i < 100; ++i) {
+            Record r{};
+            r.ip = 0x100 + 4u * i;
+            r.is_mul = true;
+            r.destination_registers[0] = static_cast<std::uint8_t>(1 + (i % 31));
+            w.write(r);
+        }
+    }
+    Reader reader(ss, Variant::CasimV2);
+    Cache l1d(small_l1d(), "L1d");
+    auto pred = comparch::predictor::make(always_taken_cfg());
+    OooCore core(narrow_4_4(), *pred, l1d, reader);
+    core.run(/*cycle_cap=*/10000);
+
+    REQUIRE(core.eof());
+    REQUIRE(core.stats().mul_busy_sum > 0);
+    REQUIRE(core.stats().alu_busy_sum == 0);   // pure-MUL trace
+}
+
 TEST_CASE("Utilization counters partition cycles correctly", "[ooo][util]") {
     // A tiny ALU stream: ensure useful_retire + retire_stall_rob_empty
     // + retire_stall_head_busy == cycles, and fetch-axis sums to cycles.

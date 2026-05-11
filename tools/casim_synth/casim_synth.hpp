@@ -47,6 +47,7 @@ class Program;
 class ThreadHandle {
 public:
     ThreadHandle& alus(std::size_t n);
+    ThreadHandle& muls(std::size_t n);
     ThreadHandle& load(std::uint64_t addr);
     ThreadHandle& store(std::uint64_t addr);
     // Conditional branch with a known taken-direction. A simple way
@@ -127,6 +128,7 @@ private:
     };
 
     void emit_alu_block(std::uint32_t tid, std::size_t n);
+    void emit_mul_block(std::uint32_t tid, std::size_t n);
     void emit_load(std::uint32_t tid, std::uint64_t addr);
     void emit_store(std::uint32_t tid, std::uint64_t addr);
     void emit_branch(std::uint32_t tid, bool taken);

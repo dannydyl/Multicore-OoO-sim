@@ -14,6 +14,10 @@ ThreadHandle& ThreadHandle::alus(std::size_t n) {
     prog_->emit_alu_block(tid_, n);
     return *this;
 }
+ThreadHandle& ThreadHandle::muls(std::size_t n) {
+    prog_->emit_mul_block(tid_, n);
+    return *this;
+}
 ThreadHandle& ThreadHandle::load(std::uint64_t addr) {
     prog_->emit_load(tid_, addr);
     return *this;
@@ -119,6 +123,21 @@ void Program::emit_alu_block(std::uint32_t tid, std::size_t n) {
         // Give each ALU a dst reg dependency that rotates through
         // a 31-register pool. This avoids accidental zero-dependency
         // streams where the OoO core decodes everything as parallel.
+        r.destination_registers[0] =
+            static_cast<std::uint8_t>(1 + (i % 31));
+        st.records.emplace_back(r);
+    }
+}
+
+void Program::emit_mul_block(std::uint32_t tid, std::size_t n) {
+    check_tid(tid);
+    auto& st = threads_[tid];
+    st.records.reserve(st.records.size() + n);
+    for (std::size_t i = 0; i < n; ++i) {
+        trace::Record r{};
+        r.ip       = st.next_pc;
+        st.next_pc += 4;
+        r.is_mul   = true;           // CasimV2 opcode hint -> Opcode::Mul
         r.destination_registers[0] =
             static_cast<std::uint8_t>(1 + (i % 31));
         st.records.emplace_back(r);

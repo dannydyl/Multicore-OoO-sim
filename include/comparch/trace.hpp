@@ -87,6 +87,14 @@ struct Record {
     std::uint64_t ip = 0;
     bool is_branch    = false;
     bool branch_taken = false;
+    // CasimV2-only: explicit multiply hint. ChampSim records don't
+    // carry an opcode class, so a record that's neither branch nor
+    // memory falls through to Opcode::Alu by default — leaving the
+    // MUL functional units unused. CasimV2 producers (casim_synth,
+    // future DR client) can set is_mul=true to route the record to
+    // the multi-stage MUL pipeline instead. Always false in
+    // Standard-variant records.
+    bool is_mul       = false;
     std::array<std::uint8_t,  kStandardDestRegs> destination_registers{};
     std::array<std::uint8_t,  kStandardSrcRegs>  source_registers{};
     std::array<std::uint64_t, kStandardDestMem>  destination_memory{};

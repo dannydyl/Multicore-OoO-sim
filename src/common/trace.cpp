@@ -130,9 +130,13 @@ bool read_standard(std::istream& in, Record& r) {
 // record (with the leading type tag) still fits in 64 bytes:
 //   1 (type) + 1 (br flags) + 8 (ip) + 2 + 4 + 16 + 32 = 64.
 void write_casimv2_instr_packed(std::ostream& out, const Record& r) {
-    std::uint8_t br = (r.is_branch ? 0x1 : 0x0) | (r.branch_taken ? 0x2 : 0x0);
+    // Bit layout: 0=is_branch, 1=branch_taken, 2=is_mul. Bits 3-7
+    // reserved for future opcode-class hints (FP, vector, etc.).
+    std::uint8_t flags = (r.is_branch    ? 0x1 : 0x0)
+                       | (r.branch_taken ? 0x2 : 0x0)
+                       | (r.is_mul       ? 0x4 : 0x0);
     put_u8(out, static_cast<std::uint8_t>(RecordType::Instr));   // 1
-    put_u8(out, br);                                             // 1
+    put_u8(out, flags);                                          // 1
     put_u64(out, r.ip);                                          // 8
     for (auto v : r.destination_registers) put_u8(out, v);       // 2
     for (auto v : r.source_registers)      put_u8(out, v);       // 4
@@ -143,10 +147,11 @@ void write_casimv2_instr_packed(std::ostream& out, const Record& r) {
 
 bool read_casimv2_instr_payload(std::istream& in, Record& r) {
     // Type byte already consumed by caller.
-    std::uint8_t br = 0;
-    if (!get_u8(in, br)) throw TraceError("truncated v2 instr: branch flags");
-    r.is_branch    = (br & 0x1) != 0;
-    r.branch_taken = (br & 0x2) != 0;
+    std::uint8_t flags = 0;
+    if (!get_u8(in, flags)) throw TraceError("truncated v2 instr: flags");
+    r.is_branch    = (flags & 0x1) != 0;
+    r.branch_taken = (flags & 0x2) != 0;
+    r.is_mul       = (flags & 0x4) != 0;
     if (!get_u64(in, r.ip)) throw TraceError("truncated v2 instr: ip");
     for (auto& v : r.destination_registers)
         if (!get_u8(in, v)) throw TraceError("truncated v2 instr: dst regs");

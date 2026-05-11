@@ -65,6 +65,10 @@ Inst classify(const trace::Record& rec, std::uint64_t dyn_count) {
     const std::uint64_t store_addr = first_nonzero_addr(rec.destination_memory);
     const std::uint64_t load_addr  = first_nonzero_addr(rec.source_memory);
 
+    // Opcode priority: BRANCH > STORE > LOAD > MUL hint > ALU.
+    // The is_mul flag is a CasimV2-only opcode hint — it doesn't
+    // override memory ops (a load/store with is_mul set is treated
+    // as the memory op; nonsense combination from the producer).
     if (rec.is_branch) {
         inst.opcode       = Opcode::Branch;
         inst.branch_taken = rec.branch_taken;
@@ -74,6 +78,8 @@ Inst classify(const trace::Record& rec, std::uint64_t dyn_count) {
     } else if (load_addr != 0) {
         inst.opcode   = Opcode::Load;
         inst.mem_addr = load_addr;
+    } else if (rec.is_mul) {
+        inst.opcode = Opcode::Mul;
     } else {
         inst.opcode = Opcode::Alu;
     }
