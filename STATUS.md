@@ -21,10 +21,13 @@ to drive the binary.
 - **Cache coherence.** Directory + ring interconnect with five
   protocols: MI, MSI, MESI, MOSI, MOESIF. Backed by 137+ unit and
   scenario tests across the protocol matrix.
-- **Shared LLS.** `cache_mode=shared_lls` swaps the per-core L2 for
-  a single shared last-level cache with the directory embedded in
-  it. Non-inclusive non-exclusive (NINE) policy; see "known
-  limitations" below.
+- **Shared LLS.** `cache_mode=shared_lls` removes the per-core L2;
+  L1 misses sink directly into the coherence adapter, and the
+  directory consults a single shared last-level cache (LLS) as a
+  data residency layer before going to memory. Non-inclusive
+  non-exclusive (NINE) policy. The coherence mechanism is still
+  pure directory — see "known limitations" for what this does and
+  does not mean.
 - **Multi-thread trace replay (CasimV2).** Per-thread `.casim` files
   in a 32-byte-header + tagged-64-byte-record format. Three record
   kinds: Instr, Sync (lock / barrier / atomic), Lifecycle
@@ -59,6 +62,31 @@ These are accurate descriptions of what the simulator does NOT
 model. Calling these out so anyone reading numbers from this sim
 knows what to discount.
 
+- **Coherence is directory-only, no snooping.** All 5 protocols
+  (MI/MSI/MESI/MOSI/MOESIF) use point-to-point unicast through a
+  central DirectoryController. There is no broadcast / snoop
+  primitive, no L1-to-L1 intervention path; every miss goes
+  through the directory. On an S→M upgrade with K sharers the
+  directory sends K REQ_INVALIDs and collects K INVACKs (O(N)
+  network traffic per upgrade) — under a snooping protocol this
+  would be a single broadcast (O(1) latency, bandwidth-bound).
+  Numbers from this sim are honest directory-based numbers; they
+  cannot be compared directly against snoop-based systems.
+- **`cache_mode=shared_lls` is NOT hybrid coherence.** The label
+  "hybrid" appears in [report_doc/10-lls-hybrid-coherence.md](report_doc/10-lls-hybrid-coherence.md)
+  as the *design target* but the implementation is pure directory.
+  What `shared_lls` actually does: removes the per-core L2 and
+  routes L1 misses straight to the adapter; the directory then
+  consults the LLS as a data residency cache before going to
+  memory. The protocol mechanism (presence vector + unicast
+  REQ_INVALID) is unchanged from `private_l2` mode. There is no
+  L1-snoop layer, no peer-L1 intervention. The doc describes a
+  two-layer system; the code implements a one-layer system with
+  a faster data-fetch path.
+- **LLS is a data residency cache, not a snoop filter.** It does
+  not answer "would any L1 hit on a snoop?" Sharer tracking lives
+  in the directory's presence vector (`kMaxSharers` array per
+  block) — same mechanism in `private_l2` and `shared_lls` modes.
 - **Interconnect topology: ring only.** `interconnect.topology=xbar`
   is rejected at config-load. XBAR is not implemented.
 - **Memory model: SC by default.** No TSO store buffer. The LSU
@@ -93,6 +121,25 @@ Listed in rough priority order. None of these is blocking the
 sim from producing meaningful research results today; they're
 genuine extensions, not unfinished baseline work.
 
+- **Actual hybrid L1-snoop + LLS-directory coherence.** Build
+  out the design in [report_doc/10-lls-hybrid-coherence.md](report_doc/10-lls-hybrid-coherence.md)
+  for real. Scope, roughly:
+    - Network: a broadcast primitive (ring already has the
+      topology for it — one packet rippling clockwise touches every
+      node).
+    - New message kinds: snoop GETS/GETM that propagate around the
+      ring, INTERVENE_DATA for peer-L1 responses.
+    - Each agent (MI/MSI/MESI/MOSI/MOESIF): a snoop-receiver path
+      that decides intervene-or-pass-along based on local state.
+    - Stats: snoop hits (intervention) vs directory hits (LLS or
+      memory) — a workload's `intervention rate` becomes a real
+      metric instead of being implicit in `c2c_transfers`.
+    - Tests: shared-load workload should show ≫0 interventions
+      under hybrid, 0 under current directory-only.
+  This is substantial — probably a week of focused work — and the
+  numbers it would produce are genuinely different from what the
+  current sim reports, so any paper-style result comparing snoop
+  vs directory has to wait for this.
 - **DR-based tracer.** A DynamoRIO client to capture per-thread
   CasimV2 traces from real pthread programs (SPLASH-2, PARSEC).
   Sketched in [docs/tracing.md](docs/tracing.md). Requires a
