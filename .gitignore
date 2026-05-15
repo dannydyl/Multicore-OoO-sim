@@ -59,3 +59,9 @@ out.json
 
 # understand-anything plugin output (knowledge graph, fingerprints, ignore config)
 .understand-anything/
+
+# MkDocs build output
+/site/
+
+# Local Python venv used to build the docs
+/.venv*/

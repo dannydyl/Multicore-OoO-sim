@@ -1,0 +1,132 @@
+site_name: Multicore OoO Simulator
+site_description: A multi-core, out-of-order, cache-coherent CMP simulator in modern C++20.
+site_url: https://dannydyl.github.io/Multicore-OoO-sim/
+repo_url: https://github.com/dannydyl/Multicore-OoO-sim
+repo_name: dannydyl/Multicore-OoO-sim
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - include-markdown
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.caret
+  - pymdownx.tilde
+  - pymdownx.keys
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/dannydyl/Multicore-OoO-sim
+
+nav:
+  - Home: index.md
+  - Overview:
+      - Architecture: overview/architecture.md
+      - Benchmarks:   overview/benchmarks.md
+      - Status:       overview/status.md
+  - Usage:
+      - Running:       usage/running.md
+      - Traces:        usage/traces.md
+      - Tracing setup: usage/tracing.md
+      - Trace format:  usage/trace-format.md
+      - Log format:    usage/log-format.md
+  - Phase reports:
+      - Index:                       report/index.md
+      - Overview:                    report/00-overview.md
+      - Phase 0 — Skeleton:          report/01-phase0-skeleton.md
+      - Phase 1 — Traces:            report/02-phase1-traces.md
+      - Phase 2 — Cache:             report/03-phase2-cache.md
+      - Phase 3 — Predictor:         report/04-phase3-predictor.md
+      - Tools & libraries:           report/05-tools-and-libraries.md
+      - Phase 4 — Review:            report/06-phase4-review.md
+      - Phase 5A — Coherence:        report/07-phase5a-coherence.md
+      - Phase 5B — Full integration: report/08-phase5b-full.md
+      - Config sweep:                report/09-config-sweep.md
+      - LLS + hybrid coherence:      report/10-lls-hybrid-coherence.md
+      - Validation bugs:             report/11-validation-bugs.md
+      - Heterogeneous traces:        report/12-heterogeneous-traces.md
+      - LOG=1 + rpt split:           report/13-log-mode-and-rpt-split.md
+      - Writeback + private synth:   report/14-writeback-and-private-synth.md
+      - Baseline characterization:   report/15-baseline-characterization.md
+      - Real-trace deadlock:         report/16-real-trace-deadlock-rootcause.md
+      - Heterogeneous mix results:   report/17-heterogeneous-real-mix-results.md
+      - LLS study guide:             report/18-lls-study-guide.md
+      - Code review (Phases 0–3):    report/code-review.md
+  - Study material:
+      - Index: study/index.md
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    # Many phase reports link to source files (src/, tests/, cmake/) that live
+    # outside the docs tree. Those resolve to broken paths after include; keep
+    # signal at info-level so they don't fail --strict, but nav errors still do.
+    not_found: info
+    absolute_links: ignore
+    unrecognized_links: info
+    anchors: info
